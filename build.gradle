@@ -1,0 +1,78 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.8'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.srikar'
+version = '1.0.0'
+description = 'Demo project for Spring Boot'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+
+    // Spring MVC
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // Spring Web Seccurity
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+    // openapi
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9"
+
+    // JWT (JJWT)
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
+    runtimeOnly  'io.jsonwebtoken:jjwt-impl:0.12.5'
+    runtimeOnly  'io.jsonwebtoken:jjwt-jackson:0.12.5'
+
+    // Redis Session Storage Depedencies
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.session:spring-session-data-redis'
+
+
+    // Actuator (REQUIRED for health, heartbeat, metrics)
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Validation (for @Valid, @NotNull, @NotBlank, etc.)
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Kafka Clients (AdminClient, NewTopic)
+    implementation 'org.apache.kafka:kafka-clients:3.8.0'
+
+    // Spring Kafka (optional)
+    implementation 'org.springframework.kafka:spring-kafka'
+
+    // Spring Data JPA
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // Resilience4j for Circuit Breaker (Spring Boot 3)
+    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.3.0'
+
+    // PostgreSQL JDBC Driver
+    runtimeOnly 'org.postgresql:postgresql:42.7.4'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // DevTools
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
