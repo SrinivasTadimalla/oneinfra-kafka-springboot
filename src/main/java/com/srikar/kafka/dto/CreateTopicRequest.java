@@ -17,5 +17,6 @@ public class CreateTopicRequest {
 
     @Min(1)
     private short replicationFactor = 1;
+
 }
 

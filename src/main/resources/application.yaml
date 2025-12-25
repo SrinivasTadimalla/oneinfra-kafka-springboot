@@ -1,194 +1,205 @@
 spring:
-  application:
-    name: kafka
+    application:
+        name: kafka
 
-  # ============================================================
-  #                   REDIS (SESSION)
-  # ============================================================
-  session:
-    store-type: redis
-    timeout: 60m
+    # ============================================================
+    #   ✅ JVM SSL TRUSTSTORE (outbound HTTPS from Spring)
+    #   Used when Spring calls Keycloak discovery/JWKS over HTTPS
+    #   Add Keycloak CA cert into this truststore if self-signed
+    # ============================================================
+    main:
+        system-properties:
+            javax.net.ssl.trustStore: ${JVM_TRUSTSTORE:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
+            javax.net.ssl.trustStorePassword: ${JVM_TRUSTSTORE_PASSWORD:Srikar@1}
+            javax.net.ssl.trustStoreType: ${JVM_TRUSTSTORE_TYPE:PKCS12}
 
-  data:
-    redis:
-      host: ${REDIS_HOST:192.168.66.1}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:Srikar@1}
-      timeout: 2s
+    # ============================================================
+    #                   REDIS (SESSION)
+    # ============================================================
+    session:
+        store-type: redis
+        timeout: 60m
 
-  # ============================================================
-  #                   DATASOURCE (POSTGRES)
-  # ============================================================
-  datasource:
-    url: jdbc:postgresql://${DB_HOST:192.168.66.1}:5432/${DB_NAME:postgres}?currentSchema=${DB_SCHEMA:iaas_kafka}
-    username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:db2@dmin}
-    driver-class-name: org.postgresql.Driver
+    data:
+        redis:
+            host: ${REDIS_HOST:192.168.66.1}
+            port: ${REDIS_PORT:6379}
+            password: ${REDIS_PASSWORD:Srikar@1}
+            timeout: 2s
 
-    hikari:
-      maximum-pool-size: ${DB_POOL_MAX:8}
-      minimum-idle: ${DB_POOL_MIN:2}
-      connection-timeout: ${DB_CONN_TIMEOUT_MS:15000}
-      idle-timeout: 600000
-      max-lifetime: 1800000
-      connection-test-query: SELECT 1
+    # ============================================================
+    #                   DATASOURCE (POSTGRES)
+    # ============================================================
+    datasource:
+        url: jdbc:postgresql://${DB_HOST:192.168.66.1}:5432/${DB_NAME:postgres}?currentSchema=${DB_SCHEMA:iaas_kafka}
+        username: ${DB_USER:postgres}
+        password: ${DB_PASSWORD:db2@dmin}
+        driver-class-name: org.postgresql.Driver
 
-  # ============================================================
-  #                         JPA
-  # ============================================================
-  jpa:
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
-    hibernate:
-      ddl-auto: none
-    properties:
-      hibernate:
-        default_schema: ${DB_SCHEMA:iaas_kafka}
+        hikari:
+            maximum-pool-size: ${DB_POOL_MAX:8}
+            minimum-idle: ${DB_POOL_MIN:2}
+            connection-timeout: ${DB_CONN_TIMEOUT_MS:15000}
+            idle-timeout: 600000
+            max-lifetime: 1800000
+            connection-test-query: SELECT 1
 
-  # ============================================================
-  #                        CORS
-  # ============================================================
-  web:
-    cors:
-      allowed-origins:
-        - http://192.168.66.1:4200
-        - http://192.168.66.1:4300
-        - http://192.168.66.1:4900
-      allowed-methods: [GET, POST, PUT, DELETE, OPTIONS]
-      allowed-headers: [Content-Type, Authorization]
-      exposed-headers: [Content-Type, Authorization]
-      allow-credentials: true
+    # ============================================================
+    #                         JPA
+    # ============================================================
+    jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+            ddl-auto: none
+        properties:
+            hibernate:
+                default_schema: ${DB_SCHEMA:iaas_kafka}
 
-  lifecycle:
-    timeout-per-shutdown-phase: 30s
+    # ============================================================
+    #                        CORS
+    # ============================================================
+    web:
+        cors:
+            allowed-origins:
+                - http://localhost:4200
+                - http://localhost:4300
+                - http://localhost:4900
+            allowed-methods: [ GET, POST, PUT, DELETE, OPTIONS ]
+            allowed-headers: [ Content-Type, Authorization ]
+            exposed-headers: [ Content-Type, Authorization ]
+            allow-credentials: true
 
-  # ============================================================
-  #                 ✅ KEYCLOAK JWT (Resource Server)
-  # ============================================================
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://192.168.66.1:8080/realms/oneinfra-realm}
+    lifecycle:
+        timeout-per-shutdown-phase: 30s
 
-  # ============================================================
-  #            SPRING KAFKA (mTLS → SSL listeners on 9093)
-  # ============================================================
-  kafka:
-    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:192.168.66.108:9093,192.168.66.115:9093}
+    # ============================================================
+    #                 ✅ KEYCLOAK JWT (Resource Server)
+    # ============================================================
+    security:
+        oauth2:
+            resourceserver:
+                jwt:
+                    issuer-uri: ${KEYCLOAK_ISSUER_URI:https://192.168.66.1:9443/realms/oneinfra-realm}
 
-    properties:
-      security.protocol: SSL
+    # ============================================================
+    #            SPRING KAFKA (mTLS → SSL listeners on 9093)
+    # ============================================================
+    kafka:
+        bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:192.168.66.108:9093,192.168.66.115:9093}
 
-      ssl.truststore.location: ${KAFKA_SSL_TRUSTSTORE:/home/srinivas/kafka-certs/srinivas-trust-store.p12}
-      ssl.truststore.password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:Srikar@1}
-      ssl.truststore.type: PKCS12
+        properties:
+            security.protocol: SSL
 
-      ssl.keystore.location: ${KAFKA_SSL_KEYSTORE:/home/srinivas/kafka-certs/kafka-client.p12}
-      ssl.keystore.password: ${KAFKA_SSL_KEYSTORE_PASSWORD:Srikar@1}
-      ssl.keystore.type: PKCS12
-      ssl.key.password: ${KAFKA_SSL_KEY_PASSWORD:Srikar@1}
+            ssl.truststore.location: ${KAFKA_SSL_TRUSTSTORE:/home/srinivas/kafka-certs/srinivas-trust-store.p12}
+            ssl.truststore.password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:Srikar@1}
+            ssl.truststore.type: PKCS12
 
-      # Using IPs in cert SAN; disabling hostname verification for Kafka client
-      ssl.endpoint.identification.algorithm: ""
+            ssl.keystore.location: ${KAFKA_SSL_KEYSTORE:/home/srinivas/kafka-certs/kafka-client.p12}
+            ssl.keystore.password: ${KAFKA_SSL_KEYSTORE_PASSWORD:Srikar@1}
+            ssl.keystore.type: PKCS12
+            ssl.key.password: ${KAFKA_SSL_KEY_PASSWORD:Srikar@1}
 
-    admin:
-      properties:
-        request.timeout.ms: 5000
-        default.api.timeout.ms: 5000
+            # Using IPs in cert SAN; disabling hostname verification for Kafka client
+            ssl.endpoint.identification.algorithm: ""
+
+        admin:
+            properties:
+                request.timeout.ms: 5000
+                default.api.timeout.ms: 5000
 
 
 # ============================================================
 #                        SERVER
 # ============================================================
 server:
-  port: ${SERVER_PORT:9001}
-  shutdown: graceful
+    port: ${SERVER_PORT:9001}
+    shutdown: graceful
 
-  ssl:
-    enabled: ${SERVER_SSL_ENABLED:true}
-    key-store: ${SERVER_SSL_KEYSTORE:/home/srinivas/kafka-certs/oneinfra-api.p12}
-    key-store-type: PKCS12
-    key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
-    key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
-    # ✅ Recommended: omit key-password unless you know it differs from store password
-    # key-password: ${SERVER_SSL_KEY_PASSWORD:Srikar@1}
+    ssl:
+        enabled: ${SERVER_SSL_ENABLED:true}
+        key-store: ${SERVER_SSL_KEYSTORE:/home/srinivas/kafka-certs/oneinfra-api.p12}
+        key-store-type: PKCS12
+        key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
+        key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
+        # ✅ Recommended: omit key-password unless you know it differs from store password
+        # key-password: ${SERVER_SSL_KEY_PASSWORD:Srikar@1}
 
 
 # ============================================================
 #                       LOGGING
 # ============================================================
 logging:
-  level:
-    root: INFO
+    level:
+        root: INFO
 
 
 # ============================================================
 #                     ACTUATOR ENDPOINTS
 # ============================================================
 management:
-  endpoints:
-    web:
-      exposure:
-        include: "*"
-  health:
-    show-details: always
-    probes:
-      enabled: true
+    endpoints:
+        web:
+            exposure:
+                include: "*"
+    health:
+        show-details: always
+        probes:
+            enabled: true
 
 
 # ============================================================
 #                ONEINFRA: SSH + HOSTS + SERVICES
 # ============================================================
 oneinfra:
-  cluster: ${ONEINFRA_CLUSTER:kraft-cluster-1}
+    cluster: ${ONEINFRA_CLUSTER:kraft-cluster-1}
 
 process:
-  enabled: ${PROCESS_ENABLED:true}
+    enabled: ${PROCESS_ENABLED:true}
 
-  ssh:
-    user: ${ONEINFRA_SSH_USER:oneinfractl}
-    port: ${ONEINFRA_SSH_PORT:22}
-    private-key-path: ${ONEINFRA_SSH_PRIVATE_KEY_PATH:/var/run/oneinfra-ssh/kafka_ssh_privatekey}
-    known-hosts-path: ${ONEINFRA_SSH_KNOWN_HOSTS_PATH:/var/run/oneinfra-ssh/kafka_server_hosts}
-    connect-timeout-ms: ${ONEINFRA_SSH_CONNECT_TIMEOUT_MS:3000}
-    command-timeout-ms: ${ONEINFRA_SSH_COMMAND_TIMEOUT_MS:10000}
+    ssh:
+        user: ${ONEINFRA_SSH_USER:oneinfractl}
+        port: ${ONEINFRA_SSH_PORT:22}
+        private-key-path: ${ONEINFRA_SSH_PRIVATE_KEY_PATH:/var/run/oneinfra-ssh/kafka_ssh_privatekey}
+        known-hosts-path: ${ONEINFRA_SSH_KNOWN_HOSTS_PATH:/var/run/oneinfra-ssh/kafka_server_hosts}
+        connect-timeout-ms: ${ONEINFRA_SSH_CONNECT_TIMEOUT_MS:3000}
+        command-timeout-ms: ${ONEINFRA_SSH_COMMAND_TIMEOUT_MS:10000}
 
-  services:
-    controller-unit: ${ONEINFRA_CONTROLLER_UNIT:kafka-controller.service}
-    broker-unit: ${ONEINFRA_BROKER_UNIT:kafka-broker.service}
+    services:
+        controller-unit: ${ONEINFRA_CONTROLLER_UNIT:kafka-controller.service}
+        broker-unit: ${ONEINFRA_BROKER_UNIT:kafka-broker.service}
 
-  hosts:
-    controller: ${ONEINFRA_CONTROLLER_HOST:192.168.66.1}
-    brokers:
-      "1": ${ONEINFRA_BROKER1_HOST:192.168.66.108}
-      "2": ${ONEINFRA_BROKER2_HOST:192.168.66.115}
+    hosts:
+        controller: ${ONEINFRA_CONTROLLER_HOST:192.168.66.1}
+        brokers:
+            "1": ${ONEINFRA_BROKER1_HOST:192.168.66.108}
+            "2": ${ONEINFRA_BROKER2_HOST:192.168.66.115}
 
 
 # ============================================================
 #                Circuit Breaker + Retry - Resilience4j
 # ============================================================
 resilience4j:
-  circuitbreaker:
-    instances:
-      kafkaAdmin:
-        sliding-window-type: COUNT_BASED
-        sliding-window-size: 4
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 30s
-        permitted-number-of-calls-in-half-open-state: 3
-        automatic-transition-from-open-to-half-open-enabled: true
-        record-exceptions:
-          - org.apache.kafka.common.KafkaException
-          - org.apache.kafka.common.errors.TimeoutException
-          - java.net.ConnectException
+    circuitbreaker:
+        instances:
+            kafkaAdmin:
+                sliding-window-type: COUNT_BASED
+                sliding-window-size: 4
+                failure-rate-threshold: 50
+                wait-duration-in-open-state: 30s
+                permitted-number-of-calls-in-half-open-state: 3
+                automatic-transition-from-open-to-half-open-enabled: true
+                record-exceptions:
+                    - org.apache.kafka.common.KafkaException
+                    - org.apache.kafka.common.errors.TimeoutException
+                    - java.net.ConnectException
 
-  retry:
-    instances:
-      kafkaAdmin:
-        max-attempts: 3
-        wait-duration: 1s
-        retry-exceptions:
-          - org.apache.kafka.common.KafkaException
-          - org.apache.kafka.common.errors.TimeoutException
-          - java.net.ConnectException
-        fail-after-max-attempts: true
+    retry:
+        instances:
+            kafkaAdmin:
+                max-attempts: 3
+                wait-duration: 1s
+                retry-exceptions:
+                    - org.apache.kafka.common.KafkaException
+                    - org.apache.kafka.common.errors.TimeoutException
+                    - java.net.ConnectException
+                fail-after-max-attempts: true

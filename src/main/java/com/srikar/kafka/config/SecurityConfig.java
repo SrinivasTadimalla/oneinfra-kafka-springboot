@@ -7,7 +7,6 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
@@ -22,44 +21,66 @@ import java.util.stream.Collectors;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    // ✅ Must match your Keycloak client id where roles are created
     private static final String KEYCLOAK_CLIENT_ID = "secauth-api";
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
         http
-                // CORS
                 .cors(Customizer.withDefaults())
-
-                // JWT APIs are stateless
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-                // Authorization
                 .authorizeHttpRequests(auth -> auth
+                        // ----------------------------
+                        // Public endpoints
+                        // ----------------------------
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-
                         .requestMatchers(
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html"
                         ).permitAll()
 
-                        // ✅ Your new roles
-                        .requestMatchers("/topics/**").hasRole("KAFKA_ADMIN")
-                        .requestMatchers("/process/**").hasRole("KAFKA_ADMIN")
-                        .requestMatchers("/clusters/**").hasRole("KAFKA_ADMIN")
-                        .requestMatchers("/connectors/**").hasRole("KAFKA_ADMIN")
+                        // ----------------------------
+                        // Kafka Cluster inventory (DB metadata)
+                        // ----------------------------
 
-                        // example: allow DEV also
-                        // .requestMatchers(HttpMethod.GET, "/topics/**").hasAnyRole("KAFKA_ADMIN", "KAFKA_DEV")
+                        // ✅ Snapshot: allow non-admin roles to view (meta + live health)
+                        .requestMatchers(HttpMethod.GET, "/api/kafka/clusters/*/snapshot").hasAnyRole(
+                                "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
+                        )
+
+                        // ✅ Inventory CRUD remains ADMIN-only
+                        .requestMatchers(HttpMethod.POST, "/api/kafka/clusters/upsert").hasRole("KAFKA_ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/kafka/clusters/**").hasRole("KAFKA_ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/kafka/clusters/**").hasRole("KAFKA_ADMIN")
+
+                        // ----------------------------
+                        // Kafka Cluster runtime health (AdminClient probe)
+                        // ----------------------------
+                        .requestMatchers(HttpMethod.GET, "/api/kafka/cluster/status").hasAnyRole(
+                                "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
+                        )
+
+                        // ----------------------------
+                        // Topics
+                        // ----------------------------
+                        .requestMatchers(HttpMethod.GET, "/api/kafka/topics").hasAnyRole(
+                                "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
+                        )
+                        .requestMatchers("/api/kafka/topics/**").hasRole("KAFKA_ADMIN")
+
+                        // ----------------------------
+                        // Connectors / Process
+                        // ----------------------------
+                        .requestMatchers("/api/kafka/connectors/**").hasRole("KAFKA_ADMIN")
+                        .requestMatchers("/api/kafka/process/**").hasRole("KAFKA_ADMIN")
 
                         .anyRequest().authenticated()
                 )
 
-                // JWT validation + role extraction from Keycloak token
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                 );
@@ -67,15 +88,6 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * ✅ Extract Keycloak CLIENT roles from:
-     *   resource_access.<client-id>.roles = ["KAFKA_ADMIN", "KAFKA_DEV", ...]
-     *
-     * Converts them to Spring authorities:
-     *   ROLE_KAFKA_ADMIN, ROLE_KAFKA_DEV, ...
-     *
-     * So `.hasRole("KAFKA_ADMIN")` works.
-     */
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
 

@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.ZonedDateTime;
@@ -33,14 +34,11 @@ public class TopicController {
     }
 
     // ---------- List topics ----------
-    // ✅ Hybrid-friendly: works for BOTH session-auth and JWT-auth
-    // Spring injects the Authentication built from either:
-    // - HttpSession (stateful login)
-    // - Bearer JWT (stateless)
+    // ✅ Allow ADMIN + DEV to list topics
+    @PreAuthorize("hasAnyRole('KAFKA_ADMIN','KAFKA_DEV','KAFKA_SUPP','KAFKA_TEST')")
     @GetMapping
     public ResponseEntity<ApiResponse<Map<String, Object>>> listTopics(Authentication auth) {
 
-        // ✅ Safe: no direct SecurityContextHolder usage
         log.info("AUTH principal={}, authorities={}", auth.getName(), auth.getAuthorities());
 
         List<String> topics = topicService.listTopics();
@@ -62,7 +60,8 @@ public class TopicController {
     }
 
     // ---------- Create topic (sync) ----------
-    // ✅ Hybrid-friendly: you can also inject Authentication here if you want auditing
+    // ✅ Only ADMIN can create topics
+    @PreAuthorize("hasRole('KAFKA_ADMIN')")
     @PostMapping("/create")
     public ResponseEntity<ApiResponse<TopicWithListResponse>> createTopic(
             @Valid @RequestBody CreateTopicRequest request,
@@ -95,9 +94,8 @@ public class TopicController {
     }
 
     // ---------- Delete topic (async at controller level) ----------
-    // ⚠️ Note: CompletableFuture runs on a different thread (common pool).
-    // If you need auth inside the async block, you must propagate SecurityContext.
-    // Here we only log auth BEFORE the async boundary, so it's safe.
+    // ✅ Only ADMIN can delete topics
+    @PreAuthorize("hasRole('KAFKA_ADMIN')")
     @PostMapping("/delete")
     public CompletableFuture<ResponseEntity<ApiResponse<TopicWithListResponse>>> deleteTopic(
             @Valid @RequestBody DeleteTopicRequest request,
