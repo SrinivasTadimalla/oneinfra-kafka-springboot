@@ -65,8 +65,14 @@ public class KafkaNodeEntity {
     @Column(name = "role", nullable = false, length = 50)
     private String role;
 
+    /**
+     * ✅ Renamed from `isVm` -> `vm`
+     * Keeps DB column as `is_vm` but generates clean Lombok accessors:
+     *   boolean isVm()
+     *   void setVm(boolean)
+     */
     @Column(name = "is_vm", nullable = false)
-    private boolean isVm;
+    private boolean vm;
 
     @Column(name = "vm_name", length = 120)
     private String vmName;

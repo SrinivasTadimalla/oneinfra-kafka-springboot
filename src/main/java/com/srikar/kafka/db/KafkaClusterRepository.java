@@ -1,19 +1,21 @@
 package com.srikar.kafka.db;
 
 import com.srikar.kafka.entity.KafkaClusterEntity;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
-public interface KafkaClusterRepository extends JpaRepository<KafkaClusterEntity, Long> {
+public interface KafkaClusterRepository extends JpaRepository<KafkaClusterEntity, UUID> {
 
-    // Used by: listClustersWithHealth()
     List<KafkaClusterEntity> findAllByOrderByNameAsc();
 
-    // Used by: snapshotByName(name)
-    Optional<KafkaClusterEntity> findByName(String name);
+    Optional<KafkaClusterEntity> findByNameIgnoreCase(String name);
 
-    // Optional (nice to have for validations)
-    boolean existsByName(String name);
+    boolean existsByNameIgnoreCase(String name);
+
+    @EntityGraph(attributePaths = "nodes")
+    Optional<KafkaClusterEntity> findWithNodesByNameIgnoreCase(String name);
 }

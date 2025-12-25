@@ -7,7 +7,9 @@ import org.apache.kafka.common.Node;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
@@ -17,7 +19,7 @@ public class KafkaAdminHealthService {
     private static final Duration TIMEOUT = Duration.ofSeconds(2);
 
     public KafkaClusterHealthDto probe(String bootstrapServers) {
-        long start = System.currentTimeMillis();
+        Instant observedAt = Instant.now();
 
         Properties props = new Properties();
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -28,26 +30,36 @@ public class KafkaAdminHealthService {
             var desc = admin.describeCluster();
 
             String clusterId = desc.clusterId().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            Node controller = desc.controller().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            Collection<Node> nodes = desc.nodes().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 
-            long latency = System.currentTimeMillis() - start;
+            Node controller = desc.controller().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            String controllerStr = controller != null ? (controller.host() + ":" + controller.port()) : null;
+
+            Collection<Node> nodes = desc.nodes().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            List<String> brokers = (nodes == null) ? List.of()
+                    : nodes.stream()
+                    .map(n -> n.host() + ":" + n.port())
+                    .sorted()
+                    .toList();
 
             return KafkaClusterHealthDto.builder()
-                    .status(KafkaClusterHealthDto.Status.UP)
+                    .status("UP")
                     .clusterId(clusterId)
-                    .controller(controller != null ? controller.host() + ":" + controller.port() : null)
-                    .brokerCount(nodes != null ? nodes.size() : 0)
-                    .latencyMs(latency)
+                    .controller(controllerStr)
+                    .brokerCount(brokers.size())
+                    .brokers(brokers)
+                    .observedAt(observedAt)
+                    .error(null)
                     .build();
 
         } catch (Exception ex) {
-            long latency = System.currentTimeMillis() - start;
-
             return KafkaClusterHealthDto.builder()
-                    .status(KafkaClusterHealthDto.Status.DOWN)
+                    .status("DOWN")
+                    .clusterId(null)
+                    .controller(null)
+                    .brokerCount(0)
+                    .brokers(List.of())
+                    .observedAt(observedAt)
                     .error(shortError(ex))
-                    .latencyMs(latency)
                     .build();
         }
     }

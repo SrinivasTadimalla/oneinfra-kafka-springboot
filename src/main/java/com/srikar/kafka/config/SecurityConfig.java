@@ -21,6 +21,10 @@ import java.util.stream.Collectors;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * Must match the Keycloak client where roles are defined:
+     * resource_access.<client-id>.roles = ["KAFKA_ADMIN", ...]
+     */
     private static final String KEYCLOAK_CLIENT_ID = "secauth-api";
 
     @Bean
@@ -32,6 +36,7 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
                 .authorizeHttpRequests(auth -> auth
+
                         // ----------------------------
                         // Public endpoints
                         // ----------------------------
@@ -44,37 +49,44 @@ public class SecurityConfig {
                         ).permitAll()
 
                         // ----------------------------
-                        // Kafka Cluster inventory (DB metadata)
+                        // Kafka Clusters
+                        // Controller base: /api/kafka/clusters
                         // ----------------------------
 
-                        // ✅ Snapshot: allow non-admin roles to view (meta + live health)
+                        // ✅ Implemented now
+                        .requestMatchers(HttpMethod.GET, "/api/kafka/clusters/overview").hasAnyRole(
+                                "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
+                        )
+
+                        // ✅ Future: /api/kafka/clusters/{clusterName}/snapshot
+                        // IMPORTANT: Use "*" not "**" in the middle (Spring 6 PathPatternParser rule)
                         .requestMatchers(HttpMethod.GET, "/api/kafka/clusters/*/snapshot").hasAnyRole(
                                 "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
                         )
 
-                        // ✅ Inventory CRUD remains ADMIN-only
+                        // ----------------------------
+                        // Kafka Cluster inventory (write)
+                        // ----------------------------
                         .requestMatchers(HttpMethod.POST, "/api/kafka/clusters/upsert").hasRole("KAFKA_ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/kafka/clusters/**").hasRole("KAFKA_ADMIN")
+
+                        // Any other cluster GET endpoints -> ADMIN only
                         .requestMatchers(HttpMethod.GET, "/api/kafka/clusters/**").hasRole("KAFKA_ADMIN")
 
                         // ----------------------------
-                        // Kafka Cluster runtime health (AdminClient probe)
+                        // Legacy / other endpoints (if present)
                         // ----------------------------
                         .requestMatchers(HttpMethod.GET, "/api/kafka/cluster/status").hasAnyRole(
                                 "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
                         )
 
-                        // ----------------------------
                         // Topics
-                        // ----------------------------
                         .requestMatchers(HttpMethod.GET, "/api/kafka/topics").hasAnyRole(
                                 "KAFKA_ADMIN", "KAFKA_DEV", "KAFKA_SUPP", "KAFKA_TEST"
                         )
                         .requestMatchers("/api/kafka/topics/**").hasRole("KAFKA_ADMIN")
 
-                        // ----------------------------
                         // Connectors / Process
-                        // ----------------------------
                         .requestMatchers("/api/kafka/connectors/**").hasRole("KAFKA_ADMIN")
                         .requestMatchers("/api/kafka/process/**").hasRole("KAFKA_ADMIN")
 
@@ -95,13 +107,13 @@ public class SecurityConfig {
 
         converter.setJwtGrantedAuthoritiesConverter((Jwt jwt) -> {
             Map<String, Object> resourceAccess = jwt.getClaim("resource_access");
-            if (resourceAccess == null) return Collections.emptyList();
+            if (resourceAccess == null) return Collections.emptySet();
 
             Object clientAccessObj = resourceAccess.get(KEYCLOAK_CLIENT_ID);
-            if (!(clientAccessObj instanceof Map<?, ?> clientAccess)) return Collections.emptyList();
+            if (!(clientAccessObj instanceof Map<?, ?> clientAccess)) return Collections.emptySet();
 
             Object rolesObj = clientAccess.get("roles");
-            if (!(rolesObj instanceof Collection<?> roles)) return Collections.emptyList();
+            if (!(rolesObj instanceof Collection<?> roles)) return Collections.emptySet();
 
             return roles.stream()
                     .map(String::valueOf)
