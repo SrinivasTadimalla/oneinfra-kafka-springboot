@@ -18,7 +18,7 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     // ---------------------------------------------------------
-    // 1. Bean validation errors (@Valid)
+    // 1) Bean validation errors (@Valid)
     // ---------------------------------------------------------
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Map<String, String>>> handleValidationException(
@@ -29,104 +29,106 @@ public class GlobalExceptionHandler {
             errors.put(fieldError.getField(), fieldError.getDefaultMessage());
         }
 
-        ApiResponse<Map<String, String>> response = ApiResponse.<Map<String, String>>builder()
-                .success(false)
-                .message("Validation failed")
-                .data(errors)
-                .timestamp(ZonedDateTime.now())
-                .build();
-
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Map<String, String>>builder()
+                        .success(false)
+                        .message("Validation failed")
+                        .data(errors)
+                        .timestamp(ZonedDateTime.now())
+                        .build());
     }
 
     // ---------------------------------------------------------
-    // 2. Domain-level validation errors
+    // 2) Domain-level validation errors
     // ---------------------------------------------------------
     @ExceptionHandler(DomainValidationException.class)
     public ResponseEntity<ApiResponse<String>> handleDomainValidation(DomainValidationException ex) {
 
         log.warn("Domain validation error: {}", ex.getMessage());
 
-        ApiResponse<String> response = ApiResponse.<String>builder()
-                .success(false)
-                .message(ex.getMessage())
-                .data(null)
-                .timestamp(ZonedDateTime.now())
-                .build();
-
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(fail(ex.getMessage()));
     }
 
     // ---------------------------------------------------------
-    // 3. Resource not found
+    // 3) Resource not found
     // ---------------------------------------------------------
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponse<String>> handleNotFound(ResourceNotFoundException ex) {
 
         log.warn("Resource not found: {}", ex.getMessage());
 
-        ApiResponse<String> response = ApiResponse.<String>builder()
-                .success(false)
-                .message(ex.getMessage())
-                .data(null)
-                .timestamp(ZonedDateTime.now())
-                .build();
-
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(fail(ex.getMessage()));
     }
 
     // ---------------------------------------------------------
-    // 4. Kafka operation failures
+    // 4) Topic exceptions (NEW)
+    // ---------------------------------------------------------
+    @ExceptionHandler(DuplicateTopicException.class)
+    public ResponseEntity<ApiResponse<String>> handleDuplicateTopic(DuplicateTopicException ex) {
+
+        log.warn("Duplicate topic: {}", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(fail(ex.getMessage()));
+    }
+
+    @ExceptionHandler(TopicNotFoundException.class)
+    public ResponseEntity<ApiResponse<String>> handleTopicNotFound(TopicNotFoundException ex) {
+
+        log.warn("Topic not found: {}", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(fail(ex.getMessage()));
+    }
+
+    // ---------------------------------------------------------
+    // 5) Kafka operation failures
     // ---------------------------------------------------------
     @ExceptionHandler(KafkaOperationException.class)
     public ResponseEntity<ApiResponse<String>> handleKafkaOperation(KafkaOperationException ex) {
 
         log.error("Kafka operation failed: {}", ex.getMessage(), ex);
 
-        ApiResponse<String> response = ApiResponse.<String>builder()
-                .success(false)
-                .message(ex.getMessage())
-                .data(null)
-                .timestamp(ZonedDateTime.now())
-                .build();
-
-        // Kafka failures are usually 500 unless you want 502/503
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(fail(ex.getMessage()));
     }
 
     // ---------------------------------------------------------
-    // 5. Cluster operation failures
+    // 6) Cluster operation failures
     // ---------------------------------------------------------
     @ExceptionHandler(ClusterOperationException.class)
     public ResponseEntity<ApiResponse<String>> handleClusterOperation(ClusterOperationException ex) {
 
         log.error("Cluster operation failed: {}", ex.getMessage(), ex);
 
-        ApiResponse<String> response = ApiResponse.<String>builder()
-                .success(false)
-                .message(ex.getMessage())
-                .data(null)
-                .timestamp(ZonedDateTime.now())
-                .build();
-
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(fail(ex.getMessage()));
     }
 
     // ---------------------------------------------------------
-    // 6. Catch-all unexpected exceptions
+    // 7) Catch-all unexpected exceptions
     // ---------------------------------------------------------
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<String>> handleGenericException(Exception ex) {
 
         log.error("Unexpected error occurred:", ex);
 
-        ApiResponse<String> response = ApiResponse.<String>builder()
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(fail("Internal server error"));
+    }
+
+    // ---------------------------------------------------------
+    // Small helper (keeps handlers consistent)
+    // ---------------------------------------------------------
+    private ApiResponse<String> fail(String message) {
+        return ApiResponse.<String>builder()
                 .success(false)
-                .message("Internal server error")
+                .message(message)
                 .data(null)
                 .timestamp(ZonedDateTime.now())
                 .build();
-
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
     }
+
 }

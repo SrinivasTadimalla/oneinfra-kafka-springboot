@@ -1,4 +1,4 @@
-package com.srikar.kafka.dto;
+package com.srikar.kafka.dto.cluster;
 
 import lombok.*;
 

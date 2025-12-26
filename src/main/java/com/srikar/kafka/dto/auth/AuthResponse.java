@@ -1,4 +1,4 @@
-package com.srikar.kafka.dto;
+package com.srikar.kafka.dto.auth;
 
 public record AuthResponse(
         String status,

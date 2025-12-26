@@ -1,6 +1,6 @@
 package com.srikar.kafka.service;
 
-import com.srikar.kafka.dto.KafkaClusterHealthDto;
+import com.srikar.kafka.dto.cluster.KafkaClusterHealthDto;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.common.Node;

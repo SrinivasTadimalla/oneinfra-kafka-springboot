@@ -1,9 +1,7 @@
 package com.srikar.kafka.controller;
 
 import com.srikar.kafka.api.ApiResponse;
-import com.srikar.kafka.dto.KafkaClusterOverviewDto;
-import com.srikar.kafka.dto.KafkaClusterSnapshotDto;
-import com.srikar.kafka.dto.KafkaClusterSummaryDto;
+import com.srikar.kafka.dto.cluster.KafkaClusterOverviewDto;
 import com.srikar.kafka.service.KafkaClusterSnapshotService;
 import com.srikar.kafka.utilities.ApiResponses;
 import lombok.RequiredArgsConstructor;
