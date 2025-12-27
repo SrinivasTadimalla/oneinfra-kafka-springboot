@@ -44,13 +44,17 @@ public class KafkaClusterEntity {
     @Column(name = "environment", length = 50)
     private String environment;
 
+    // ✅ NEW: Kafka internal Cluster ID (stored in DB column kafka_cluster_id)
+    // Example value: "FVPHsj-BSC2rSo0UYt7vmg"
+    @Column(name = "kafka_cluster_id", length = 64)
+    private String kafkaClusterId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    // ✅ ADD THIS: cluster -> topics
     @OneToMany(
             mappedBy = "cluster",
             cascade = CascadeType.ALL,
@@ -72,7 +76,6 @@ public class KafkaClusterEntity {
         this.updatedAt = Instant.now();
     }
 
-    // Optional convenience helpers
     public void addTopic(KafkaTopicEntity topic) {
         topics.add(topic);
         topic.setCluster(this);

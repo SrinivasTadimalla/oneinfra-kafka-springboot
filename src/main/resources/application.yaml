@@ -2,19 +2,12 @@ spring:
     application:
         name: kafka
 
-    # ============================================================
-    #   ✅ JVM SSL TRUSTSTORE (outbound HTTPS from Spring)
-    #   Used when Spring calls Keycloak discovery/JWKS over HTTPS
-    # ============================================================
     main:
         system-properties:
             javax.net.ssl.trustStore: ${JVM_TRUSTSTORE:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
             javax.net.ssl.trustStorePassword: ${JVM_TRUSTSTORE_PASSWORD:Srikar@1}
             javax.net.ssl.trustStoreType: ${JVM_TRUSTSTORE_TYPE:PKCS12}
 
-    # ============================================================
-    #                   REDIS (CACHE + SESSION)
-    # ============================================================
     session:
         store-type: redis
         timeout: 60m
@@ -34,15 +27,11 @@ spring:
             use-key-prefix: true
             key-prefix: "oneinfra:kafka:"
 
-    # ============================================================
-    #                   DATASOURCE (POSTGRES)
-    # ============================================================
     datasource:
         url: jdbc:postgresql://${DB_HOST:192.168.66.1}:5432/${DB_NAME:postgres}?currentSchema=${DB_SCHEMA:iaas_kafka}
         username: ${DB_USER:postgres}
         password: ${DB_PASSWORD:db2@dmin}
         driver-class-name: org.postgresql.Driver
-
         hikari:
             maximum-pool-size: ${DB_POOL_MAX:8}
             minimum-idle: ${DB_POOL_MIN:2}
@@ -51,9 +40,6 @@ spring:
             max-lifetime: 1800000
             connection-test-query: SELECT 1
 
-    # ============================================================
-    #                         JPA
-    # ============================================================
     jpa:
         database-platform: org.hibernate.dialect.PostgreSQLDialect
         hibernate:
@@ -62,9 +48,6 @@ spring:
             hibernate:
                 default_schema: ${DB_SCHEMA:iaas_kafka}
 
-    # ============================================================
-    #                        CORS
-    # ============================================================
     web:
         cors:
             allowed-origins:
@@ -79,31 +62,36 @@ spring:
     lifecycle:
         timeout-per-shutdown-phase: 30s
 
-    # ============================================================
-    #                 ✅ KEYCLOAK JWT (Resource Server)
-    # ============================================================
     security:
         oauth2:
             resourceserver:
                 jwt:
                     issuer-uri: ${KEYCLOAK_ISSUER_URI:https://192.168.66.1:9443/realms/oneinfra-realm}
 
-# ============================================================
-#        ONEINFRA KAFKA ADMIN PROBE (DB->Redis bootstrap cache)
-#        ✅ SSL/mTLS for AdminClient lives here (NOT spring.kafka.*)
-# ============================================================
+# ========================================================================
+# ✅ ONEINFRA KAFKA (SINGLE ROOT)
+# ========================================================================
 oneinfra:
     kafka:
-        cache:
-            ttl: 10m
-            key-prefix: "oneinfra:kafka:bootstrap:"
-
         admin:
-            timeout-ms: 2000
-            request-timeout-ms: 2000
-            default-api-timeout-ms: 2000
+            # realistic timeouts for TLS clusters
+            request-timeout-ms: ${KAFKA_ADMIN_REQUEST_TIMEOUT_MS:15000}
+            default-api-timeout-ms: ${KAFKA_ADMIN_DEFAULT_API_TIMEOUT_MS:15000}
+            # optional, if you added it in properties:
+            timeout-ms: ${KAFKA_ADMIN_TIMEOUT_MS:15000}
 
-            # --- AdminClient SSL/mTLS (used when connecting to Kafka brokers) ---
+            # TLS handshake / initial connect helpers
+            socket-setup-timeout-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MS:10000}
+            socket-setup-timeout-max-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MAX_MS:30000}
+
+            # fallback only if code calls create(null/blank)
+            bootstrap-servers:
+                - ${KAFKA_DEFAULT_BOOTSTRAP_1:192.168.66.108:9093}
+                - ${KAFKA_DEFAULT_BOOTSTRAP_2:192.168.66.115:9093}
+
+            client-id: ${KAFKA_ADMIN_CLIENT_ID:oneinfra-kafka-admin}
+
+            # ✅ IMPORTANT: ssl MUST be under admin
             ssl:
                 security-protocol: ${KAFKA_ADMIN_SECURITY_PROTOCOL:SSL}
 
@@ -111,22 +99,18 @@ oneinfra:
                 truststore-password: ${KAFKA_ADMIN_TRUSTSTORE_PASSWORD:Srikar@1}
                 truststore-type: ${KAFKA_ADMIN_TRUSTSTORE_TYPE:PKCS12}
 
-                keystore-location: ${KAFKA_ADMIN_KEYSTORE_LOCATION:/home/srinivas/kafka-certs/oneinfra-kafka-client.p12}
+                keystore-location: ${KAFKA_ADMIN_KEYSTORE_LOCATION:/home/srinivas/pki/keystores/oneinfra-kafka-client.p12}
                 keystore-password: ${KAFKA_ADMIN_KEYSTORE_PASSWORD:Srikar@1}
                 keystore-type: ${KAFKA_ADMIN_KEYSTORE_TYPE:PKCS12}
 
                 key-password: ${KAFKA_ADMIN_KEY_PASSWORD:Srikar@1}
 
-                # empty disables hostname verification (useful for IP-based brokers)
+                # empty disables hostname verification (IP-based brokers)
                 endpoint-identification-algorithm: ${KAFKA_ADMIN_ENDPOINT_IDENTIFICATION_ALGORITHM:}
 
-# ============================================================
-#                        SERVER
-# ============================================================
 server:
     port: ${SERVER_PORT:9001}
     shutdown: graceful
-
     ssl:
         enabled: ${SERVER_SSL_ENABLED:true}
         key-store: ${SERVER_SSL_KEYSTORE:/home/srinivas/kafka-certs/oneinfra-api.p12}
@@ -134,16 +118,10 @@ server:
         key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
         key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
 
-# ============================================================
-#                       LOGGING
-# ============================================================
 logging:
     level:
         root: INFO
 
-# ============================================================
-#                     ACTUATOR ENDPOINTS
-# ============================================================
 management:
     endpoints:
         web:
@@ -154,13 +132,8 @@ management:
         probes:
             enabled: true
 
-# ============================================================
-#                ONEINFRA: SSH + HOSTS + SERVICES
-# (Keep this isolated; only used if you do SSH/systemctl actions)
-# ============================================================
 process:
     enabled: ${PROCESS_ENABLED:true}
-
     ssh:
         user: ${ONEINFRA_SSH_USER:oneinfractl}
         port: ${ONEINFRA_SSH_PORT:22}
@@ -179,9 +152,6 @@ process:
             "1": ${ONEINFRA_BROKER1_HOST:192.168.66.108}
             "2": ${ONEINFRA_BROKER2_HOST:192.168.66.115}
 
-# ============================================================
-#                Circuit Breaker + Retry - Resilience4j
-# ============================================================
 resilience4j:
     circuitbreaker:
         instances:

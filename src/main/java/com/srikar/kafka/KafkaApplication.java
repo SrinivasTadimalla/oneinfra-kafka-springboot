@@ -2,9 +2,10 @@ package com.srikar.kafka;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
+@ConfigurationPropertiesScan("com.srikar.kafka")
 public class KafkaApplication {
 
     public static void main(String[] args) {

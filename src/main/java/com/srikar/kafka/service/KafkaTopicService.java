@@ -1,5 +1,6 @@
 package com.srikar.kafka.service;
 
+import com.srikar.kafka.config.KafkaAdminClientFactory;
 import com.srikar.kafka.db.KafkaClusterRepository;
 import com.srikar.kafka.db.KafkaTopicRepository;
 import com.srikar.kafka.dto.topic.TopicCreateRequest;
@@ -16,6 +17,7 @@ import com.srikar.kafka.exception.ResourceNotFoundException;
 import com.srikar.kafka.exception.TopicNotFoundException;
 import com.srikar.kafka.utilities.TopicMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
@@ -26,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class KafkaTopicService {
@@ -56,6 +59,9 @@ public class KafkaTopicService {
         }
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
+
+            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
+            cacheKafkaClusterIdIfNeeded(admin, cluster);
 
             NewTopic newTopic = new NewTopic(
                     topicName,
@@ -147,6 +153,9 @@ public class KafkaTopicService {
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
+            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
+            cacheKafkaClusterIdIfNeeded(admin, cluster);
+
             // Partitions can only INCREASE in Kafka
             Integer requestedPartitions = req.getPartitions();
             if (requestedPartitions != null) {
@@ -218,6 +227,9 @@ public class KafkaTopicService {
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
+            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
+            cacheKafkaClusterIdIfNeeded(admin, cluster);
+
             admin.deleteTopics(List.of(topicName))
                     .all()
                     .get(8, TimeUnit.SECONDS);
@@ -238,6 +250,25 @@ public class KafkaTopicService {
     // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------
+    private void cacheKafkaClusterIdIfNeeded(AdminClient admin, KafkaClusterEntity cluster) {
+        try {
+            String kafkaClusterId = admin.describeCluster()
+                    .clusterId()
+                    .get(8, TimeUnit.SECONDS);
+
+            if (kafkaClusterId == null || kafkaClusterId.isBlank()) return;
+
+            if (cluster.getKafkaClusterId() == null || !cluster.getKafkaClusterId().equals(kafkaClusterId)) {
+                cluster.setKafkaClusterId(kafkaClusterId);
+                clusterRepo.save(cluster);
+                log.info("Cached kafka_cluster_id={} for cluster name={}", kafkaClusterId, cluster.getName());
+            }
+        } catch (Exception e) {
+            // Do NOT fail topic operations if caching clusterId fails
+            log.debug("Unable to fetch/cache Kafka clusterId for cluster name={}", cluster.getName(), e);
+        }
+    }
+
     private void applyTopicConfigs(AdminClient admin, String topicName, Map<String, String> configs) throws Exception {
 
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);

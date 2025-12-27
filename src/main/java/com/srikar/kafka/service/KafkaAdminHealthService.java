@@ -1,40 +1,40 @@
 package com.srikar.kafka.service;
 
+import com.srikar.kafka.config.KafkaAdminClientFactory;
+import com.srikar.kafka.config.KafkaAdminProperties;
 import com.srikar.kafka.dto.cluster.KafkaClusterHealthDto;
+import lombok.RequiredArgsConstructor;
 import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.common.Node;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
-import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 @Service
+@RequiredArgsConstructor
 public class KafkaAdminHealthService {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(2);
+    private final KafkaAdminClientFactory adminFactory;
+    private final KafkaAdminProperties props;
 
     public KafkaClusterHealthDto probe(String bootstrapServers) {
         Instant observedAt = Instant.now();
 
-        Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, (int) TIMEOUT.toMillis());
-        props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) TIMEOUT.toMillis());
+        long timeoutMs = props.getDefaultApiTimeoutMs();
 
-        try (AdminClient admin = AdminClient.create(props)) {
+        try (AdminClient admin = adminFactory.create(bootstrapServers)) {
+
             var desc = admin.describeCluster();
 
-            String clusterId = desc.clusterId().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            String clusterId = desc.clusterId().get(timeoutMs, TimeUnit.MILLISECONDS);
 
-            Node controller = desc.controller().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            Node controller = desc.controller().get(timeoutMs, TimeUnit.MILLISECONDS);
             String controllerStr = controller != null ? (controller.host() + ":" + controller.port()) : null;
 
-            Collection<Node> nodes = desc.nodes().get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            Collection<Node> nodes = desc.nodes().get(timeoutMs, TimeUnit.MILLISECONDS);
             List<String> brokers = (nodes == null) ? List.of()
                     : nodes.stream()
                     .map(n -> n.host() + ":" + n.port())
