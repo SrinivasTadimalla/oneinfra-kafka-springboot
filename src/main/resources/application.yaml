@@ -118,9 +118,17 @@ server:
         key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
         key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
 
+# ========================================================================
+# ✅ LOGGING (DROP-IN)
+#   Turn ON Spring Security debugging for 401 root-cause.
+#   After you fix auth, you can revert org.springframework.security to INFO.
+# ========================================================================
 logging:
     level:
         root: INFO
+        org.springframework.security: DEBUG
+        org.springframework.security.oauth2: DEBUG
+        org.springframework.web: INFO
 
 management:
     endpoints:

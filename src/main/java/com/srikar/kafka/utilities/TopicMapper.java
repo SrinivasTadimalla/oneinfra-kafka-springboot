@@ -5,6 +5,7 @@ import com.srikar.kafka.dto.topic.TopicSummary;
 import com.srikar.kafka.entity.KafkaTopicEntity;
 
 import java.util.Collections;
+import java.util.UUID;
 
 public final class TopicMapper {
 
@@ -15,7 +16,7 @@ public final class TopicMapper {
 
         return TopicSummary.builder()
                 .id(e.getId())
-                .clusterId(e.getClusterId())
+                .clusterId(resolveClusterId(e))
                 .topicName(e.getTopicName())
                 .partitions(e.getPartitions())
                 .replicationFactor(e.getReplicationFactor())
@@ -30,7 +31,7 @@ public final class TopicMapper {
 
         return TopicDetail.builder()
                 .id(e.getId())
-                .clusterId(e.getClusterId())
+                .clusterId(resolveClusterId(e))
                 .topicName(e.getTopicName())
                 .description(e.getDescription())
                 .partitions(e.getPartitions())
@@ -42,5 +43,14 @@ public final class TopicMapper {
                 .createdAt(e.getCreatedAt())
                 .updatedAt(e.getUpdatedAt())
                 .build();
+    }
+
+    private static UUID resolveClusterId(KafkaTopicEntity e) {
+        // ✅ Prefer relationship (always correct right after save)
+        if (e.getCluster() != null && e.getCluster().getId() != null) {
+            return e.getCluster().getId();
+        }
+        // fallback (works when entity is loaded from DB)
+        return e.getClusterId();
     }
 }
