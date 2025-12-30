@@ -31,8 +31,9 @@ public class KafkaTopicController {
     // POST /api/kafka/topics
     // -------------------------------------------------------
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<ApiResponse<TopicDetail>> create(@Valid @RequestBody TopicCreateRequest req) {
-
+    public ResponseEntity<ApiResponse<TopicDetail>> create(
+            @Valid @RequestBody TopicCreateRequest req
+    ) {
         TopicDetail created = topicService.createTopic(req);
 
         return ResponseEntity.ok(
@@ -45,8 +46,9 @@ public class KafkaTopicController {
     // GET /api/kafka/topics?clusterId=<uuid>
     // -------------------------------------------------------
     @GetMapping
-    public ResponseEntity<ApiResponse<List<TopicSummary>>> list(@RequestParam UUID clusterId) {
-
+    public ResponseEntity<ApiResponse<List<TopicSummary>>> list(
+            @RequestParam UUID clusterId
+    ) {
         List<TopicSummary> list = topicService.listTopics(clusterId);
 
         return ResponseEntity.ok(
@@ -55,7 +57,7 @@ public class KafkaTopicController {
     }
 
     // -------------------------------------------------------
-    // GET ONE
+    // GET ONE (DB-backed only)
     // GET /api/kafka/topics/{topicName}?clusterId=<uuid>
     // -------------------------------------------------------
     @GetMapping("/{topicName}")
@@ -67,6 +69,22 @@ public class KafkaTopicController {
 
         return ResponseEntity.ok(
                 ApiResponses.ok("Kafka topic fetched successfully", detail)
+        );
+    }
+
+    // -------------------------------------------------------
+    // GET ONE + KAFKA CONFIGS (NEW)
+    // GET /api/kafka/topics/{topicName}/configs?clusterId=<uuid>
+    // -------------------------------------------------------
+    @GetMapping("/{topicName}/configs")
+    public ResponseEntity<ApiResponse<TopicDetail>> getWithConfigs(
+            @RequestParam UUID clusterId,
+            @PathVariable String topicName
+    ) {
+        TopicDetail detail = topicService.getTopicWithConfigs(clusterId, topicName);
+
+        return ResponseEntity.ok(
+                ApiResponses.ok("Kafka topic configs fetched successfully", detail)
         );
     }
 
@@ -102,4 +120,25 @@ public class KafkaTopicController {
                 ApiResponses.ok("Topic deleted", null)
         );
     }
+
+    // -------------------------------------------------------
+    // GET ONE (DB or DB+Kafka configs via flag)
+    // GET /api/kafka/topics/{topicName}/detail?clusterId=<uuid>&withConfigs=true
+    // -------------------------------------------------------
+    @GetMapping("/{topicName}/detail")
+    public ResponseEntity<ApiResponse<TopicDetail>> getTopicDetail(
+            @RequestParam UUID clusterId,
+            @PathVariable String topicName,
+            @RequestParam(defaultValue = "false") boolean withConfigs
+    ) {
+        TopicDetail data = withConfigs
+                ? topicService.getTopicWithConfigs(clusterId, topicName)
+                : topicService.getTopic(clusterId, topicName);
+
+        return ResponseEntity.ok(
+                ApiResponses.ok("Kafka topic fetched successfully", data)
+        );
+    }
+
+
 }

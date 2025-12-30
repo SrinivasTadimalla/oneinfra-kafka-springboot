@@ -60,7 +60,6 @@ public class KafkaTopicService {
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
-            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
             cacheKafkaClusterIdIfNeeded(admin, cluster);
 
             NewTopic newTopic = new NewTopic(
@@ -69,17 +68,22 @@ public class KafkaTopicService {
                     req.getReplicationFactor()
             );
 
+            // 1) Create topic
             admin.createTopics(List.of(newTopic))
                     .all()
                     .get(8, TimeUnit.SECONDS);
 
-            if (req.getConfigs() != null && !req.getConfigs().isEmpty()) {
-                applyTopicConfigs(admin, topicName, req.getConfigs());
+            // 2) Apply configs (schema-topic defaults + request configs)
+            Map<String, String> finalConfigs = buildCreateConfigs(req);
+
+            if (!finalConfigs.isEmpty()) {
+                applyTopicConfigs(admin, topicName, finalConfigs);
             }
 
         } catch (Exception e) {
             throw new KafkaOperationException(
-                    "Kafka topic creation failed: " + topicName + " (cluster=" + cluster.getName() + ")",
+                    "Kafka topic creation failed: " + topicName +
+                            " (cluster=" + cluster.getName() + ")",
                     e
             );
         }
@@ -135,6 +139,50 @@ public class KafkaTopicService {
     }
 
     // -------------------------------------------------------
+    // GET Topic Detail + Kafka Configs
+    // -------------------------------------------------------
+    @PreAuthorize("hasAnyRole('KAFKA_ADMIN','KAFKA_DEV','KAFKA_SUPP','KAFKA_TEST')")
+    @Transactional(readOnly = true)
+    public TopicDetail getTopicWithConfigs(UUID clusterId, String topicName) {
+
+        KafkaClusterEntity cluster = clusterRepo.findById(clusterId)
+                .orElseThrow(() -> new ResourceNotFoundException("Kafka cluster not found: " + clusterId));
+
+        KafkaTopicEntity entity = topicRepo
+                .findByCluster_IdAndTopicName(clusterId, topicName)
+                .orElseThrow(() -> new TopicNotFoundException(clusterId, topicName));
+
+        TopicDetail detail = TopicMapper.toDetail(entity);
+
+        try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
+
+            cacheKafkaClusterIdIfNeeded(admin, cluster);
+
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+
+            Map<ConfigResource, Config> result =
+                    admin.describeConfigs(List.of(resource))
+                            .all()
+                            .get(8, TimeUnit.SECONDS);
+
+            Config config = result.get(resource);
+
+            Map<String, String> configs = new HashMap<>();
+            for (ConfigEntry e : config.entries()) {
+                configs.put(e.name(), e.value());
+            }
+
+            detail.setConfigs(configs);
+
+        } catch (Exception e) {
+            detail.setLastError("Unable to fetch Kafka topic configs");
+            log.debug("Failed to fetch configs for topic={}", topicName, e);
+        }
+
+        return detail;
+    }
+
+    // -------------------------------------------------------
     // UPDATE Topic (Kafka + DB)
     // -------------------------------------------------------
     @PreAuthorize("hasRole('KAFKA_ADMIN')")
@@ -153,24 +201,23 @@ public class KafkaTopicService {
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
-            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
             cacheKafkaClusterIdIfNeeded(admin, cluster);
 
-            // Partitions can only INCREASE in Kafka
             Integer requestedPartitions = req.getPartitions();
             if (requestedPartitions != null) {
                 int current = entity.getPartitions() != null ? entity.getPartitions() : 0;
 
                 if (requestedPartitions < current) {
                     throw new DomainValidationException(
-                            "Kafka does not allow decreasing partitions. Current=" + current +
-                                    ", requested=" + requestedPartitions
+                            "Kafka does not allow decreasing partitions. Current=" +
+                                    current + ", requested=" + requestedPartitions
                     );
                 }
 
                 if (requestedPartitions > current) {
                     admin.createPartitions(Map.of(
-                                    topicName, NewPartitions.increaseTo(requestedPartitions)
+                                    topicName,
+                                    NewPartitions.increaseTo(requestedPartitions)
                             ))
                             .all()
                             .get(8, TimeUnit.SECONDS);
@@ -179,9 +226,8 @@ public class KafkaTopicService {
                 }
             }
 
-            Map<String, String> configs = req.getConfigs();
-            if (configs != null && !configs.isEmpty()) {
-                applyTopicConfigs(admin, topicName, configs);
+            if (req.getConfigs() != null && !req.getConfigs().isEmpty()) {
+                applyTopicConfigs(admin, topicName, req.getConfigs());
             }
 
         } catch (DomainValidationException e) {
@@ -191,12 +237,12 @@ public class KafkaTopicService {
                 throw new TopicNotFoundException(clusterId, topicName);
             }
             throw new KafkaOperationException(
-                    "Kafka topic update failed: " + topicName + " (cluster=" + cluster.getName() + ")",
+                    "Kafka topic update failed: " + topicName +
+                            " (cluster=" + cluster.getName() + ")",
                     e
             );
         }
 
-        // DB-only updates
         if (req.getDescription() != null) {
             entity.setDescription(req.getDescription());
         }
@@ -227,7 +273,6 @@ public class KafkaTopicService {
 
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
-            // ✅ NEW: cache Kafka internal clusterId into DB (safe + non-blocking)
             cacheKafkaClusterIdIfNeeded(admin, cluster);
 
             admin.deleteTopics(List.of(topicName))
@@ -239,7 +284,8 @@ public class KafkaTopicService {
                 throw new TopicNotFoundException(clusterId, topicName);
             }
             throw new KafkaOperationException(
-                    "Kafka topic deletion failed: " + topicName + " (cluster=" + cluster.getName() + ")",
+                    "Kafka topic deletion failed: " + topicName +
+                            " (cluster=" + cluster.getName() + ")",
                     e
             );
         }
@@ -250,6 +296,37 @@ public class KafkaTopicService {
     // -------------------------------------------------------
     // Helpers
     // -------------------------------------------------------
+
+    /**
+     * During CREATE:
+     * - If topicName == oneinfra_schemas -> enforce cleanup.policy=compact
+     * - Merge request configs (if any)
+     */
+    private Map<String, String> buildCreateConfigs(TopicCreateRequest req) {
+
+        String topicName = req.getTopicName();
+        boolean isSchemaTopic = "oneinfra_schemas".equalsIgnoreCase(topicName);
+
+        Map<String, String> finalConfigs = new HashMap<>();
+
+        // 1) Schema topic defaults
+        if (isSchemaTopic) {
+            finalConfigs.put("cleanup.policy", "compact");
+        }
+
+        // 2) Merge user configs
+        if (req.getConfigs() != null && !req.getConfigs().isEmpty()) {
+            finalConfigs.putAll(req.getConfigs());
+        }
+
+        // 3) Enforce compact for schema topic even if user passed delete
+        if (isSchemaTopic) {
+            finalConfigs.put("cleanup.policy", "compact");
+        }
+
+        return finalConfigs;
+    }
+
     private void cacheKafkaClusterIdIfNeeded(AdminClient admin, KafkaClusterEntity cluster) {
         try {
             String kafkaClusterId = admin.describeCluster()
@@ -258,18 +335,32 @@ public class KafkaTopicService {
 
             if (kafkaClusterId == null || kafkaClusterId.isBlank()) return;
 
-            if (cluster.getKafkaClusterId() == null || !cluster.getKafkaClusterId().equals(kafkaClusterId)) {
+            if (cluster.getKafkaClusterId() == null ||
+                    !cluster.getKafkaClusterId().equals(kafkaClusterId)) {
+
                 cluster.setKafkaClusterId(kafkaClusterId);
                 clusterRepo.save(cluster);
-                log.info("Cached kafka_cluster_id={} for cluster name={}", kafkaClusterId, cluster.getName());
+
+                log.info(
+                        "Cached kafka_cluster_id={} for cluster name={}",
+                        kafkaClusterId,
+                        cluster.getName()
+                );
             }
         } catch (Exception e) {
-            // Do NOT fail topic operations if caching clusterId fails
-            log.debug("Unable to fetch/cache Kafka clusterId for cluster name={}", cluster.getName(), e);
+            log.debug(
+                    "Unable to fetch/cache Kafka clusterId for cluster name={}",
+                    cluster.getName(),
+                    e
+            );
         }
     }
 
-    private void applyTopicConfigs(AdminClient admin, String topicName, Map<String, String> configs) throws Exception {
+    private void applyTopicConfigs(
+            AdminClient admin,
+            String topicName,
+            Map<String, String> configs
+    ) throws Exception {
 
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
 

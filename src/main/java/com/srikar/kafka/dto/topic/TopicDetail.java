@@ -30,7 +30,6 @@ public class TopicDetail {
     // Optional (Kafka-side failure info)
     private String lastError;
 
-    // Optional topic configs (future use)
     private Map<String, String> configs;
 
     private Instant createdAt;
