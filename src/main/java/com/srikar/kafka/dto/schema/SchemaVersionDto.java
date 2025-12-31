@@ -14,12 +14,21 @@ import java.util.UUID;
 public class SchemaVersionDto {
 
     private UUID id;
+
+    private UUID clusterId;
+
     private UUID subjectId;
+    private String subject;
 
     private Integer version;
-    private String fingerprint;
 
-    private SchemaVersionStatus status;
+    private SchemaType schemaType;
+    private CompatibilityMode compatibility;
 
+    private String schemaCanonical;
+    private String schemaRaw;
+    private String schemaHash;
+
+    private boolean enabled;
     private Instant createdAt;
 }

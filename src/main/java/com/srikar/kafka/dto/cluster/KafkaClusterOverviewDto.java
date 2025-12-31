@@ -13,4 +13,7 @@ public class KafkaClusterOverviewDto {
     // Live-only
     private KafkaClusterHealthDto health;
 
+    // add:
+    private KafkaKraftControlPlaneDto controlPlane;
+
 }

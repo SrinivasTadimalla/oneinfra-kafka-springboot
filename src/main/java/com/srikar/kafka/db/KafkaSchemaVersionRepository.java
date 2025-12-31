@@ -4,6 +4,7 @@ import com.srikar.kafka.entity.KafkaSchemaVersionEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -16,9 +17,14 @@ public interface KafkaSchemaVersionRepository extends JpaRepository<KafkaSchemaV
            """)
     Integer findMaxVersion(UUID subjectId);
 
-    Optional<KafkaSchemaVersionEntity> findBySubjectIdAndVersion(UUID subjectId, Integer version);
+
+    Optional<KafkaSchemaVersionEntity> findBySubjectIdAndVersion(UUID subjectId, int version);
 
     Optional<KafkaSchemaVersionEntity> findFirstBySubjectIdOrderByVersionDesc(UUID subjectId);
 
     boolean existsBySubjectIdAndSchemaHash(UUID subjectId, String schemaHash);
+
+    // ✅ add this:
+    List<KafkaSchemaVersionEntity> findBySubjectIdOrderByVersionDesc(UUID subjectId);
+
 }

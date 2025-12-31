@@ -7,6 +7,7 @@ import com.srikar.kafka.db.KafkaClusterRepository;
 import com.srikar.kafka.dto.cluster.KafkaClusterHealthDto;
 import com.srikar.kafka.dto.cluster.KafkaClusterMetaDto;
 import com.srikar.kafka.dto.cluster.KafkaClusterOverviewDto;
+import com.srikar.kafka.dto.cluster.KafkaKraftControlPlaneDto;
 import com.srikar.kafka.entity.KafkaClusterEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,11 +36,15 @@ public class KafkaClusterSnapshotService {
     private final KafkaAdminClientFactory adminFactory;
     private final KafkaAdminProperties props;
 
+    // ✅ NEW: KRaft controller health via JMX
+    private final KafkaKraftJmxHealthService kraftJmxHealthService;
+
     /**
      * ✅ Overview list:
      * - returns DB meta + live health
      * - caches Kafka internal clusterId (describeCluster().clusterId()) into DB column kafka_cluster_id
      *   so UI can display it even if Kafka is down later.
+     * - ✅ Adds control-plane (KRaft) info from JMX (bare metal controller)
      */
     @Transactional
     public List<KafkaClusterOverviewDto> listClustersWithHealth() {
@@ -61,7 +66,7 @@ public class KafkaClusterSnapshotService {
                             .build();
 
                     // -------------------------------------------------------
-                    // Health (live)
+                    // Health (live) - broker/data plane
                     // -------------------------------------------------------
                     KafkaClusterHealthDto health;
                     if (!cluster.isEnabled()) {
@@ -82,6 +87,11 @@ public class KafkaClusterSnapshotService {
                         health = healthService.probe(bootstrap);
                     }
 
+                    // -------------------------------------------------------
+                    // ✅ NEW: Control Plane (KRaft controller) - from JMX
+                    // -------------------------------------------------------
+                    KafkaKraftControlPlaneDto controlPlane = buildControlPlane(cluster);
+
                     // Keep meta.kafkaClusterId in sync for this response
                     KafkaClusterMetaDto metaFinal = meta.toBuilder()
                             .kafkaClusterId(cluster.getKafkaClusterId())
@@ -90,6 +100,7 @@ public class KafkaClusterSnapshotService {
                     return KafkaClusterOverviewDto.builder()
                             .meta(metaFinal)
                             .health(health)
+                            .controlPlane(controlPlane) // ✅ NEW
                             .build();
                 })
                 .toList();
@@ -162,6 +173,52 @@ public class KafkaClusterSnapshotService {
                     "error", e.getClass().getSimpleName() + ": " + safeMsg(e)
             );
         }
+    }
+
+    // -------------------------------------------------------
+    // ✅ NEW: Control plane builder
+    // -------------------------------------------------------
+
+    private KafkaKraftControlPlaneDto buildControlPlane(KafkaClusterEntity cluster) {
+
+        // ✅ For now, your KRaft controller is bare metal and shared across clusters in LAB.
+        // Later we can move these into DB/config per cluster.
+        final String nodeLabel = "oneinfra-host";
+        final int quorumNodeId = 0;
+
+        final String controllerListener = "192.168.66.1:9093"; // your controller listener
+        final String jmxHost = "192.168.66.1";
+        final int jmxPort = 9999;
+
+        // If cluster disabled, keep it UNKNOWN
+        if (!cluster.isEnabled()) {
+            return KafkaKraftControlPlaneDto.builder()
+                    .node(nodeLabel)
+                    .role("CONTROLLER")
+                    .listener(controllerListener)
+                    .quorumNodeId(quorumNodeId)
+                    .mode("SINGLE_NODE_QUORUM")
+                    .status("UNKNOWN")
+                    .observedAt(Instant.now().toString())
+                    .source("JMX")
+                    .error("Cluster disabled in DB")
+                    .build();
+        }
+
+        KafkaKraftJmxHealthService.Result r =
+                kraftJmxHealthService.probe(jmxHost, jmxPort, (int) safeTimeoutMs());
+
+        return KafkaKraftControlPlaneDto.builder()
+                .node(nodeLabel)
+                .role("CONTROLLER")
+                .listener(controllerListener)
+                .quorumNodeId(quorumNodeId)
+                .mode("SINGLE_NODE_QUORUM")
+                .status(r.getStatus())
+                .observedAt(r.getObservedAt())
+                .source("JMX")
+                .error(r.getError())
+                .build();
     }
 
     // -------------------------------------------------------

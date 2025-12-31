@@ -33,4 +33,5 @@ public class SchemaRegisterRequest {
      * Optional override. If null -> backend uses default (e.g., BACKWARD).
      */
     private CompatibilityMode compatibility;
+
 }
