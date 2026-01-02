@@ -3,6 +3,7 @@ package com.srikar.kafka.controller;
 
 import com.srikar.kafka.api.ApiResponse;
 import com.srikar.kafka.dto.schema.SchemaRegisterRequest;
+import com.srikar.kafka.dto.schema.SchemaSubjectDto;
 import com.srikar.kafka.dto.schema.SchemaVersionDto;
 import com.srikar.kafka.service.KafkaSchemaRegistryService;
 import com.srikar.kafka.utilities.ApiResponses;
@@ -27,8 +28,6 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // REGISTER (CREATE / UPDATE) SCHEMA
-    // Topic Name Strategy:
-    //   subject = <topic>-key | <topic>-value
     // -------------------------------------------------------
     @PostMapping(
             path = "/register",
@@ -45,6 +44,21 @@ public class KafkaSchemaController {
     }
 
     // -------------------------------------------------------
+    // ✅ LIST SUBJECTS (for dropdown)
+    // GET /api/kafka/schemas/subjects?clusterId=...
+    // -------------------------------------------------------
+    @GetMapping("/subjects")
+    public ResponseEntity<ApiResponse<List<SchemaSubjectDto>>> listSubjects(
+            @RequestParam UUID clusterId
+    ) {
+        List<SchemaSubjectDto> data = schemaService.listSubjects(clusterId);
+
+        return ResponseEntity.ok(
+                ApiResponses.ok("Subjects fetched successfully", data)
+        );
+    }
+
+    // -------------------------------------------------------
     // GET LATEST SCHEMA VERSION
     // -------------------------------------------------------
     @GetMapping("/subjects/{subject}/latest")
@@ -52,8 +66,7 @@ public class KafkaSchemaController {
             @RequestParam UUID clusterId,
             @PathVariable String subject
     ) {
-        SchemaVersionDto data =
-                schemaService.getLatest(clusterId, subject);
+        SchemaVersionDto data = schemaService.getLatest(clusterId, subject);
 
         return ResponseEntity.ok(
                 ApiResponses.ok("Latest schema fetched successfully", data)
@@ -68,11 +81,41 @@ public class KafkaSchemaController {
             @RequestParam UUID clusterId,
             @PathVariable String subject
     ) {
-        List<SchemaVersionDto> data =
-                schemaService.getAllVersions(clusterId, subject);
+        List<SchemaVersionDto> data = schemaService.getAllVersions(clusterId, subject);
 
         return ResponseEntity.ok(
                 ApiResponses.ok("Schema versions fetched successfully", data)
+        );
+    }
+
+    // -------------------------------------------------------
+    // ✅ GET A SPECIFIC VERSION
+    // -------------------------------------------------------
+    @GetMapping("/subjects/{subject}/versions/{version}")
+    public ResponseEntity<ApiResponse<SchemaVersionDto>> getByVersion(
+            @RequestParam UUID clusterId,
+            @PathVariable String subject,
+            @PathVariable int version
+    ) {
+        SchemaVersionDto data = schemaService.getByVersion(clusterId, subject, version);
+
+        return ResponseEntity.ok(
+                ApiResponses.ok("Schema version fetched successfully", data)
+        );
+    }
+
+    // -------------------------------------------------------
+    // ✅ DELETE SUBJECT (HARD DELETE)
+    // -------------------------------------------------------
+    @DeleteMapping("/subjects/{subject}")
+    public ResponseEntity<ApiResponse<Void>> deleteSubject(
+            @RequestParam UUID clusterId,
+            @PathVariable String subject
+    ) {
+        schemaService.deleteSubject(clusterId, subject);
+
+        return ResponseEntity.ok(
+                ApiResponses.ok("Schema subject deleted successfully", null)
         );
     }
 }

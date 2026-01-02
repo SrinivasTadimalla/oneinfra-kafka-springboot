@@ -10,9 +10,11 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class SchemaSubjectDto {
+public class SchemaSubjectSummaryDto {
+
     private UUID subjectId;
     private UUID clusterId;
+
     private String subject;
 
     private SchemaType schemaType;

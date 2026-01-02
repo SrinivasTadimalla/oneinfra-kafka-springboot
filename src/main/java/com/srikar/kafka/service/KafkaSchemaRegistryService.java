@@ -4,11 +4,7 @@ package com.srikar.kafka.service;
 import com.srikar.kafka.db.KafkaClusterRepository;
 import com.srikar.kafka.db.KafkaSchemaSubjectRepository;
 import com.srikar.kafka.db.KafkaSchemaVersionRepository;
-import com.srikar.kafka.dto.schema.CompatibilityMode;
-import com.srikar.kafka.dto.schema.SchemaPart;
-import com.srikar.kafka.dto.schema.SchemaRegisterRequest;
-import com.srikar.kafka.dto.schema.SchemaType;
-import com.srikar.kafka.dto.schema.SchemaVersionDto;
+import com.srikar.kafka.dto.schema.*;
 import com.srikar.kafka.entity.KafkaClusterEntity;
 import com.srikar.kafka.entity.KafkaSchemaSubjectEntity;
 import com.srikar.kafka.entity.KafkaSchemaVersionEntity;
@@ -32,9 +28,41 @@ public class KafkaSchemaRegistryService {
     private final KafkaSchemaSubjectRepository subjectRepo;
     private final KafkaSchemaVersionRepository versionRepo;
 
-    // -----------------------------
-    // PUBLIC API (DTO RETURNING)
-    // -----------------------------
+    /* =========================================================
+       PUBLIC API
+       ========================================================= */
+
+    @Transactional
+    public SchemaVersionDto register(SchemaRegisterRequest req) {
+
+        require(req != null, "request body is required");
+
+        final UUID clusterId = req.getClusterId();
+        require(clusterId != null, "clusterId is required");
+
+        final String subject =
+                requireText(req.getSubject(), "schema name (subject) is required");
+
+        require(req.getSchemaType() != null, "schemaType is required");
+
+        final String schemaText =
+                requireText(req.getSchemaText(), "schemaText is required");
+
+        final CompatibilityMode compatibility =
+                (req.getCompatibility() == null
+                        ? CompatibilityMode.BACKWARD
+                        : req.getCompatibility());
+
+        KafkaSchemaVersionEntity saved = registerNewVersion(
+                clusterId,
+                subject,
+                req.getSchemaType().name(),
+                compatibility.name(),
+                schemaText
+        );
+
+        return toDto(saved);
+    }
 
     @Transactional
     public SchemaVersionDto getLatest(UUID clusterId, String subject) {
@@ -47,8 +75,10 @@ public class KafkaSchemaRegistryService {
         require(clusterId != null, "clusterId is required");
         final String subjectFinal = requireText(subject, "subject is required");
 
-        KafkaSchemaSubjectEntity subj = subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
-                .orElseThrow(() -> new IllegalArgumentException("Subject not found: " + subjectFinal));
+        KafkaSchemaSubjectEntity subj =
+                subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException("Subject not found: " + subjectFinal));
 
         return versionRepo.findBySubjectIdOrderByVersionDesc(subj.getId())
                 .stream()
@@ -63,51 +93,45 @@ public class KafkaSchemaRegistryService {
     }
 
     // -------------------------------------------------------
-    // REGISTER (CREATE/UPDATE) SCHEMA VERSION  ✅ NEW
-    // Topic Name Strategy:
-    //   subject = <topic>-key OR <topic>-value
+    // ✅ LIST SUBJECTS (for UI dropdown)
     // -------------------------------------------------------
     @Transactional
-    public SchemaVersionDto register(SchemaRegisterRequest req) {
-
-        require(req != null, "request body is required");
-
-        final UUID clusterId = req.getClusterId();
+    public List<SchemaSubjectDto> listSubjects(UUID clusterId) {
         require(clusterId != null, "clusterId is required");
 
-        final String topicNameFinal = requireText(req.getTopicName(), "topicName is required");
-        require(req.getPart() != null, "part is required");
-        require(req.getSchemaType() != null, "schemaType is required");
+        // friendly error if cluster missing
+        clusterRepo.findById(clusterId)
+                .orElseThrow(() -> new IllegalArgumentException("Cluster not found: " + clusterId));
 
-        final String schemaTextFinal = requireText(req.getSchemaText(), "schemaText is required");
-
-        // Default compatibility if not provided
-        final CompatibilityMode mode =
-                (req.getCompatibility() == null ? CompatibilityMode.BACKWARD : req.getCompatibility());
-
-        // ✅ TopicNameStrategy subject rule
-        final String subject = toTopicSubject(topicNameFinal, req.getPart());
-
-        // Uses your existing core write function
-        KafkaSchemaVersionEntity saved = registerNewVersion(
-                clusterId,
-                subject,
-                req.getSchemaType().name(),
-                mode.name(),
-                schemaTextFinal
-        );
-
-        return toDto(saved);
+        return subjectRepo.findAllByClusterIdOrderBySubjectAsc(clusterId)
+                .stream()
+                .map(this::toSubjectDto)
+                .toList();
     }
 
-    private static String toTopicSubject(String topicName, SchemaPart part) {
-        // part is KEY or VALUE => "key" / "value"
-        return topicName.trim() + "-" + part.name().toLowerCase();
+    // -------------------------------------------------------
+    // ✅ DELETE SUBJECT (HARD DELETE)
+    // -------------------------------------------------------
+    @Transactional
+    public void deleteSubject(UUID clusterId, String subject) {
+        require(clusterId != null, "clusterId is required");
+        final String subjectFinal = requireText(subject, "subject is required");
+
+        KafkaSchemaSubjectEntity subj =
+                subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException("Subject not found: " + subjectFinal));
+
+        // delete children first (FK)
+        versionRepo.deleteBySubjectId(subj.getId());
+
+        // delete subject
+        subjectRepo.delete(subj);
     }
 
-    // -----------------------------
-    // YOUR EXISTING WRITE METHODS (ENTITY RETURNING OK internally)
-    // -----------------------------
+    /* =========================================================
+       WRITE PATH (INTERNAL)
+       ========================================================= */
 
     @Transactional
     public KafkaSchemaSubjectEntity createOrGetSubject(
@@ -123,7 +147,8 @@ public class KafkaSchemaRegistryService {
         final String compatibilityFinal = requireText(compatibility, "compatibility is required");
 
         KafkaClusterEntity cluster = clusterRepo.findById(clusterId)
-                .orElseThrow(() -> new IllegalArgumentException("Cluster not found: " + clusterId));
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Cluster not found: " + clusterId));
 
         Optional<KafkaSchemaSubjectEntity> existing =
                 subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal);
@@ -165,10 +190,11 @@ public class KafkaSchemaRegistryService {
         final String canonical = canonicalize(schemaTypeFinal, schemaRawFinal);
         final String hash = sha256Hex(canonical);
 
+        // if same schema already exists (by hash) -> return latest
         if (versionRepo.existsBySubjectIdAndSchemaHash(subj.getId(), hash)) {
             return versionRepo.findFirstBySubjectIdOrderByVersionDesc(subj.getId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Schema exists but cannot load latest version for subject: " + subjectFinal));
+                    .orElseThrow(() ->
+                            new IllegalStateException("Schema exists but latest version missing"));
         }
 
         Integer max = versionRepo.findMaxVersion(subj.getId());
@@ -176,7 +202,7 @@ public class KafkaSchemaRegistryService {
 
         KafkaSchemaVersionEntity ver = KafkaSchemaVersionEntity.builder()
                 .id(UUID.randomUUID())
-                .subject(subj)
+                .subject(subj)                 // ✅ sets FK
                 .version(nextVersion)
                 .schemaRaw(schemaRawFinal)
                 .schemaCanonical(canonical)
@@ -185,46 +211,57 @@ public class KafkaSchemaRegistryService {
                 .createdAt(Instant.now())
                 .build();
 
+        // keep subject updated
         subj.setUpdatedAt(Instant.now());
         subjectRepo.save(subj);
 
         return versionRepo.save(ver);
     }
 
-    // -----------------------------
-    // INTERNAL ENTITY LOADERS
-    // -----------------------------
+    /* =========================================================
+       READ HELPERS
+       ========================================================= */
 
     private KafkaSchemaVersionEntity getLatestEntity(UUID clusterId, String subject) {
         require(clusterId != null, "clusterId is required");
         final String subjectFinal = requireText(subject, "subject is required");
 
-        KafkaSchemaSubjectEntity subj = subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
-                .orElseThrow(() -> new IllegalArgumentException("Subject not found: " + subjectFinal));
+        KafkaSchemaSubjectEntity subj =
+                subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException("Subject not found: " + subjectFinal));
 
         return versionRepo.findFirstBySubjectIdOrderByVersionDesc(subj.getId())
-                .orElseThrow(() -> new IllegalArgumentException("No versions found for subject: " + subjectFinal));
+                .orElseThrow(() ->
+                        new IllegalArgumentException("No versions found for subject: " + subjectFinal));
     }
 
-    private KafkaSchemaVersionEntity getByVersionEntity(UUID clusterId, String subject, int version) {
+    private KafkaSchemaVersionEntity getByVersionEntity(
+            UUID clusterId,
+            String subject,
+            int version
+    ) {
         require(clusterId != null, "clusterId is required");
         final String subjectFinal = requireText(subject, "subject is required");
         require(version > 0, "version must be >= 1");
 
-        KafkaSchemaSubjectEntity subj = subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
-                .orElseThrow(() -> new IllegalArgumentException("Subject not found: " + subjectFinal));
+        KafkaSchemaSubjectEntity subj =
+                subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException("Subject not found: " + subjectFinal));
 
         return versionRepo.findBySubjectIdAndVersion(subj.getId(), version)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Version not found: " + version + " for subject: " + subjectFinal));
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Version not found: " + version + " for subject: " + subjectFinal));
     }
 
-    // -----------------------------
-    // MAPPER (Entity -> DTO)
-    // -----------------------------
+    /* =========================================================
+       ENTITY → DTO
+       ========================================================= */
 
     private SchemaVersionDto toDto(KafkaSchemaVersionEntity e) {
-        KafkaSchemaSubjectEntity s = e.getSubject(); // safe because we're inside @Transactional
+        KafkaSchemaSubjectEntity s = e.getSubject();
 
         return SchemaVersionDto.builder()
                 .id(e.getId())
@@ -242,23 +279,38 @@ public class KafkaSchemaRegistryService {
                 .build();
     }
 
+    private SchemaSubjectDto toSubjectDto(KafkaSchemaSubjectEntity s) {
+        Integer latest = versionRepo.findMaxVersion(s.getId());
+        if (latest == null) latest = 0;
+
+        return SchemaSubjectDto.builder()
+                .subjectId(s.getId())
+                .clusterId(s.getClusterId())
+                .subject(s.getSubject())
+                .schemaType(parseSchemaType(s.getSchemaType()))
+                .compatibility(parseCompatibility(s.getCompatibility()))
+                .latestVersion(latest)
+                .enabled(s.isEnabled())
+                .updatedAt(s.getUpdatedAt())
+                .build();
+    }
+
     private static SchemaType parseSchemaType(String v) {
-        if (v == null) return null;
         try { return SchemaType.valueOf(v.trim().toUpperCase()); }
         catch (Exception ex) { return null; }
     }
 
     private static CompatibilityMode parseCompatibility(String v) {
-        if (v == null) return null;
         try { return CompatibilityMode.valueOf(v.trim().toUpperCase()); }
         catch (Exception ex) { return null; }
     }
 
     /* =========================================================
-       Canonicalization + Hash helpers
+       CANONICALIZATION + HASHING
        ========================================================= */
 
     private String canonicalize(String schemaType, String schemaRaw) {
+        // light normalization (works for AVRO JSON text)
         String s = schemaRaw.replace("\r\n", "\n").trim();
         String[] lines = s.split("\n");
         StringBuilder out = new StringBuilder();
@@ -283,7 +335,8 @@ public class KafkaSchemaRegistryService {
     }
 
     private static String requireText(String v, String msg) {
-        if (v == null || v.trim().isEmpty()) throw new IllegalArgumentException(msg);
+        if (v == null || v.trim().isEmpty())
+            throw new IllegalArgumentException(msg);
         return v.trim();
     }
 

@@ -14,24 +14,18 @@ import java.util.UUID;
 @AllArgsConstructor
 public class SchemaRegisterRequest {
 
-    @NotNull
-    private UUID clusterId;
+        @NotNull
+        private UUID clusterId;
 
-    @NotBlank
-    private String topicName;
+        @NotBlank
+        private String subject;   // schema name
 
-    @NotNull
-    private SchemaPart part; // KEY or VALUE
+        @NotNull
+        private SchemaType schemaType;
 
-    @NotNull
-    private SchemaType schemaType; // AVRO (for now)
+        @NotBlank
+        private String schemaText;
 
-    @NotBlank
-    private String schemaText; // full Avro JSON schema string
-
-    /**
-     * Optional override. If null -> backend uses default (e.g., BACKWARD).
-     */
-    private CompatibilityMode compatibility;
+        private CompatibilityMode compatibility;
 
 }
