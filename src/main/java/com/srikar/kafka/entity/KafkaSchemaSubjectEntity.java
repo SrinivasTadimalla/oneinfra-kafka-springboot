@@ -45,7 +45,7 @@ public class KafkaSchemaSubjectEntity {
     private KafkaClusterEntity cluster;
 
     /** Example: "oneinfra-schema-value" or "payments.txn.avro" */
-    @Column(name = "subject", nullable = false, length = 255)
+    @Column(name = "subject_name", nullable = false, length = 255)
     private String subject;
 
     /** AVRO / PROTOBUF / JSON_SCHEMA */

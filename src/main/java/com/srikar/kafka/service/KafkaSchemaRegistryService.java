@@ -204,12 +204,13 @@ public class KafkaSchemaRegistryService {
                 .id(UUID.randomUUID())
                 .subject(subj)                 // ✅ sets FK
                 .version(nextVersion)
-                .schemaRaw(schemaRawFinal)
-                .schemaCanonical(canonical)
-                .schemaHash(hash)
-                .enabled(true)
+                .schemaRaw(schemaRawFinal)     // -> schema_text
+                .schemaCanonical(canonical)    // -> canonical_text
+                .schemaHash(hash)              // -> fingerprint_sha256
+                .status("ACTIVE")              // ✅ DB column = status
                 .createdAt(Instant.now())
                 .build();
+
 
         // keep subject updated
         subj.setUpdatedAt(Instant.now());
@@ -274,7 +275,7 @@ public class KafkaSchemaRegistryService {
                 .schemaCanonical(e.getSchemaCanonical())
                 .schemaRaw(e.getSchemaRaw())
                 .schemaHash(e.getSchemaHash())
-                .enabled(e.isEnabled())
+                .enabled(isActive(e.getStatus()))
                 .createdAt(e.getCreatedAt())
                 .build();
     }
@@ -343,4 +344,11 @@ public class KafkaSchemaRegistryService {
     private static void require(boolean ok, String msg) {
         if (!ok) throw new IllegalArgumentException(msg);
     }
+
+    private static boolean isActive(String status) {
+        if (status == null) return true; // treat null as active
+        String s = status.trim().toUpperCase();
+        return !s.equals("DEPRECATED") && !s.equals("DISABLED") && !s.equals("INACTIVE");
+    }
+
 }

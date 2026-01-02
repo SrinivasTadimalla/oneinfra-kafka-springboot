@@ -48,26 +48,24 @@ public class KafkaSchemaVersionEntity {
     @Column(name = "version", nullable = false)
     private Integer version;
 
-    /**
-     * Your canonical/normalized form (optional but recommended).
-     * If your column is JSONB, keep columnDefinition = "jsonb"
-     * If it is TEXT, keep it as text.
-     */
-    @Column(name = "schema_canonical", columnDefinition = "text", nullable = false)
+    /** Canonical form */
+    @Column(name = "canonical_text", columnDefinition = "text", nullable = false)
     private String schemaCanonical;
 
-    /** The exact schema as registered (raw user input), optional */
-    @Column(name = "schema_raw", columnDefinition = "text")
+    /** Raw schema text */
+    @Column(name = "schema_text", columnDefinition = "text", nullable = false)
     private String schemaRaw;
 
-    /** SHA-256 or similar to detect duplicates quickly */
-    @Column(name = "schema_hash", length = 128, nullable = false)
+    /** SHA-256 fingerprint */
+    @Column(name = "fingerprint_sha256", length = 128, nullable = false)
     private String schemaHash;
 
-    /** Soft delete / active flag */
-    @Column(name = "enabled", nullable = false)
-    @Builder.Default
-    private boolean enabled = true;
+    /** ACTIVE / DEPRECATED / FAILED */
+    @Column(name = "status", length = 32, nullable = false)
+    private String status;
+
+    @Column(name = "last_error", columnDefinition = "text")
+    private String lastError;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -76,5 +74,6 @@ public class KafkaSchemaVersionEntity {
     void onCreate() {
         if (this.id == null) this.id = UUID.randomUUID();
         if (this.createdAt == null) this.createdAt = Instant.now();
+        if (this.status == null) this.status = "ACTIVE";
     }
 }
