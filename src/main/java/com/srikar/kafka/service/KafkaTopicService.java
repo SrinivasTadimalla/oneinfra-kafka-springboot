@@ -15,6 +15,7 @@ import com.srikar.kafka.exception.DuplicateTopicException;
 import com.srikar.kafka.exception.KafkaOperationException;
 import com.srikar.kafka.exception.ResourceNotFoundException;
 import com.srikar.kafka.exception.TopicNotFoundException;
+import com.srikar.kafka.utilities.TopicKafkaDelta;
 import com.srikar.kafka.utilities.TopicMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -199,35 +200,37 @@ public class KafkaTopicService {
         KafkaTopicEntity entity = topicRepo.findByCluster_IdAndTopicName(clusterId, topicName)
                 .orElseThrow(() -> new TopicNotFoundException(clusterId, topicName));
 
+        TopicKafkaDelta delta;
+
         try (AdminClient admin = adminFactory.create(cluster.getBootstrapServers())) {
 
             cacheKafkaClusterIdIfNeeded(admin, cluster);
 
-            Integer requestedPartitions = req.getPartitions();
-            if (requestedPartitions != null) {
-                int current = entity.getPartitions() != null ? entity.getPartitions() : 0;
+            // 1) Compute delta (Kafka + DB)
+            delta = computeTopicDelta(entity, req, admin, topicName);
 
-                if (requestedPartitions < current) {
-                    throw new DomainValidationException(
-                            "Kafka does not allow decreasing partitions. Current=" +
-                                    current + ", requested=" + requestedPartitions
-                    );
-                }
+            // 2) If nothing changes, do nothing (no Kafka, no DB save)
+            if (!delta.hasAnyChange()) {
+                return TopicMapper.toDetail(entity);
+            }
 
-                if (requestedPartitions > current) {
+            // 3) Apply Kafka changes only if needed
+            if (delta.isKafkaChange()) {
+
+                if (delta.getPartitionsIncreaseTo() != null) {
                     admin.createPartitions(Map.of(
                                     topicName,
-                                    NewPartitions.increaseTo(requestedPartitions)
+                                    NewPartitions.increaseTo(delta.getPartitionsIncreaseTo())
                             ))
                             .all()
                             .get(8, TimeUnit.SECONDS);
 
-                    entity.setPartitions(requestedPartitions);
+                    entity.setPartitions(delta.getPartitionsIncreaseTo());
                 }
-            }
 
-            if (req.getConfigs() != null && !req.getConfigs().isEmpty()) {
-                applyTopicConfigs(admin, topicName, req.getConfigs());
+                if (delta.getConfigDelta() != null && !delta.getConfigDelta().isEmpty()) {
+                    applyTopicConfigs(admin, topicName, delta.getConfigDelta());
+                }
             }
 
         } catch (DomainValidationException e) {
@@ -243,16 +246,18 @@ public class KafkaTopicService {
             );
         }
 
-        if (req.getDescription() != null) {
-            entity.setDescription(req.getDescription());
-        }
-        if (req.getEnabled() != null) {
-            entity.setEnabled(req.getEnabled());
+        // 4) Apply DB-only deltas (only if different)
+        if (delta.isDbChange()) {
+            if (delta.getDescription() != null) entity.setDescription(delta.getDescription());
+            if (delta.getEnabled() != null) entity.setEnabled(delta.getEnabled());
+            if (delta.getStatus() != null) entity.setStatus(delta.getStatus());
         }
 
+        // 5) Save only if any change happened (Kafka or DB)
         KafkaTopicEntity saved = topicRepo.save(entity);
         return TopicMapper.toDetail(saved);
     }
+
 
     // -------------------------------------------------------
     // DELETE Topic (Kafka + DB)
@@ -384,4 +389,108 @@ public class KafkaTopicService {
         }
         return false;
     }
+
+    private Map<String, String> fetchCurrentTopicConfigs(
+            AdminClient admin,
+            String topicName,
+            Set<String> keys
+    ) throws Exception {
+
+        if (keys == null || keys.isEmpty()) return Map.of();
+
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+
+        Map<ConfigResource, Config> result =
+                admin.describeConfigs(List.of(resource))
+                        .all()
+                        .get(8, TimeUnit.SECONDS);
+
+        Config config = result.get(resource);
+
+        Map<String, String> current = new HashMap<>();
+        for (ConfigEntry e : config.entries()) {
+            if (keys.contains(e.name())) {
+                current.put(e.name(), e.value());
+            }
+        }
+        return current;
+    }
+
+    private TopicKafkaDelta computeTopicDelta(
+            KafkaTopicEntity entity,
+            TopicUpdateRequest req,
+            AdminClient admin,
+            String topicName) throws Exception {
+
+        // ----------------------------
+        // Kafka delta: partitions
+        // ----------------------------
+        Integer partitionsIncreaseTo = null;
+
+        Integer requestedPartitions = req.getPartitions();
+        if (requestedPartitions != null) {
+            int current = entity.getPartitions() != null ? entity.getPartitions() : 0;
+
+            if (requestedPartitions < current) {
+                throw new DomainValidationException(
+                        "Kafka does not allow decreasing partitions. Current=" +
+                                current + ", requested=" + requestedPartitions
+                );
+            }
+
+            if (requestedPartitions > current) {
+                partitionsIncreaseTo = requestedPartitions;
+            }
+        }
+
+        // ----------------------------
+        // Kafka delta: configs (only apply changed keys)
+        // ----------------------------
+        Map<String, String> configDelta = new HashMap<>();
+        Map<String, String> requestedConfigs = req.getConfigs();
+
+        if (requestedConfigs != null && !requestedConfigs.isEmpty()) {
+            Map<String, String> currentKafka =
+                    fetchCurrentTopicConfigs(admin, topicName, requestedConfigs.keySet());
+
+            for (var entry : requestedConfigs.entrySet()) {
+                String key = entry.getKey();
+                String requestedVal = entry.getValue();
+                String currentVal = currentKafka.get(key);
+
+                if (!Objects.equals(requestedVal, currentVal)) {
+                    configDelta.put(key, requestedVal);
+                }
+            }
+        }
+
+        boolean kafkaChange = (partitionsIncreaseTo != null) || !configDelta.isEmpty();
+
+        // ----------------------------
+        // DB delta: description/enabled/status
+        // (only mark dbChange if value is different)
+        // ----------------------------
+        boolean descChanged = (req.getDescription() != null)
+                && !Objects.equals(req.getDescription(), entity.getDescription());
+
+        boolean enabledChanged = (req.getEnabled() != null)
+                && !Objects.equals(req.getEnabled(), entity.isEnabled());
+
+        boolean statusChanged = (req.getStatus() != null)
+                && !Objects.equals(req.getStatus(), entity.getStatus());
+
+        boolean dbChange = descChanged || enabledChanged || statusChanged;
+
+        return TopicKafkaDelta.builder()
+                .kafkaChange(kafkaChange)
+                .partitionsIncreaseTo(partitionsIncreaseTo)
+                .configDelta(configDelta)
+                .dbChange(dbChange)
+                .description(descChanged ? req.getDescription() : null)
+                .enabled(enabledChanged ? req.getEnabled() : null)
+                .status(statusChanged ? req.getStatus() : null)
+                .build();
+    }
+
+
 }

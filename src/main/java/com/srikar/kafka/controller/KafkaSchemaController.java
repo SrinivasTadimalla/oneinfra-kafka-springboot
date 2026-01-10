@@ -1,9 +1,8 @@
-// src/main/java/com/srikar/kafka/controller/KafkaSchemaController.java
 package com.srikar.kafka.controller;
 
 import com.srikar.kafka.api.ApiResponse;
 import com.srikar.kafka.dto.schema.SchemaRegisterRequest;
-import com.srikar.kafka.dto.schema.SchemaSubjectDto;
+import com.srikar.kafka.dto.schema.SchemaSubjectSummaryDto;
 import com.srikar.kafka.dto.schema.SchemaVersionDto;
 import com.srikar.kafka.service.KafkaSchemaRegistryService;
 import com.srikar.kafka.utilities.ApiResponses;
@@ -28,6 +27,7 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // REGISTER (CREATE / UPDATE) SCHEMA
+    // POST /api/kafka/schemas/register
     // -------------------------------------------------------
     @PostMapping(
             path = "/register",
@@ -48,10 +48,10 @@ public class KafkaSchemaController {
     // GET /api/kafka/schemas/subjects?clusterId=...
     // -------------------------------------------------------
     @GetMapping("/subjects")
-    public ResponseEntity<ApiResponse<List<SchemaSubjectDto>>> listSubjects(
+    public ResponseEntity<ApiResponse<List<SchemaSubjectSummaryDto>>> listSubjects(
             @RequestParam UUID clusterId
     ) {
-        List<SchemaSubjectDto> data = schemaService.listSubjects(clusterId);
+        List<SchemaSubjectSummaryDto> data = schemaService.listSubjects(clusterId);
 
         return ResponseEntity.ok(
                 ApiResponses.ok("Subjects fetched successfully", data)
@@ -60,6 +60,7 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // GET LATEST SCHEMA VERSION
+    // GET /api/kafka/schemas/subjects/{subject}/latest?clusterId=...
     // -------------------------------------------------------
     @GetMapping("/subjects/{subject}/latest")
     public ResponseEntity<ApiResponse<SchemaVersionDto>> getLatest(
@@ -75,6 +76,7 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // GET ALL SCHEMA VERSIONS FOR A SUBJECT
+    // GET /api/kafka/schemas/subjects/{subject}/versions?clusterId=...
     // -------------------------------------------------------
     @GetMapping("/subjects/{subject}/versions")
     public ResponseEntity<ApiResponse<List<SchemaVersionDto>>> getAllVersions(
@@ -90,6 +92,7 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // ✅ GET A SPECIFIC VERSION
+    // GET /api/kafka/schemas/subjects/{subject}/versions/{version}?clusterId=...
     // -------------------------------------------------------
     @GetMapping("/subjects/{subject}/versions/{version}")
     public ResponseEntity<ApiResponse<SchemaVersionDto>> getByVersion(
@@ -106,6 +109,7 @@ public class KafkaSchemaController {
 
     // -------------------------------------------------------
     // ✅ DELETE SUBJECT (HARD DELETE)
+    // DELETE /api/kafka/schemas/subjects/{subject}?clusterId=...
     // -------------------------------------------------------
     @DeleteMapping("/subjects/{subject}")
     public ResponseEntity<ApiResponse<Void>> deleteSubject(

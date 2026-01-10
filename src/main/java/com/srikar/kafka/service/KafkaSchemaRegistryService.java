@@ -93,19 +93,19 @@ public class KafkaSchemaRegistryService {
     }
 
     // -------------------------------------------------------
-    // ✅ LIST SUBJECTS (for UI dropdown)
+    // ✅ LIST SUBJECTS (for UI dropdown)  (IDEAL)
     // -------------------------------------------------------
     @Transactional
-    public List<SchemaSubjectDto> listSubjects(UUID clusterId) {
+    public List<SchemaSubjectSummaryDto> listSubjects(UUID clusterId) {
         require(clusterId != null, "clusterId is required");
 
-        // friendly error if cluster missing
+        // Friendly error if cluster missing
         clusterRepo.findById(clusterId)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found: " + clusterId));
 
         return subjectRepo.findAllByClusterIdOrderBySubjectAsc(clusterId)
                 .stream()
-                .map(this::toSubjectDto)
+                .map(this::toSubjectSummaryDto)
                 .toList();
     }
 
@@ -150,10 +150,17 @@ public class KafkaSchemaRegistryService {
                 .orElseThrow(() ->
                         new IllegalArgumentException("Cluster not found: " + clusterId));
 
-        Optional<KafkaSchemaSubjectEntity> existing =
+        Optional<KafkaSchemaSubjectEntity> existingOpt =
                 subjectRepo.findByClusterIdAndSubject(clusterId, subjectFinal);
 
-        if (existing.isPresent()) return existing.get();
+        // ✅ IDEAL: if subject exists, keep metadata up-to-date (compatibility/schemaType)
+        if (existingOpt.isPresent()) {
+            KafkaSchemaSubjectEntity existing = existingOpt.get();
+            existing.setSchemaType(schemaTypeFinal);
+            existing.setCompatibility(compatibilityFinal);
+            existing.setUpdatedAt(Instant.now());
+            return subjectRepo.save(existing);
+        }
 
         KafkaSchemaSubjectEntity created = KafkaSchemaSubjectEntity.builder()
                 .id(UUID.randomUUID())
@@ -202,15 +209,14 @@ public class KafkaSchemaRegistryService {
 
         KafkaSchemaVersionEntity ver = KafkaSchemaVersionEntity.builder()
                 .id(UUID.randomUUID())
-                .subject(subj)                 // ✅ sets FK
+                .subject(subj)
                 .version(nextVersion)
-                .schemaRaw(schemaRawFinal)     // -> schema_text
-                .schemaCanonical(canonical)    // -> canonical_text
-                .schemaHash(hash)              // -> fingerprint_sha256
-                .status("ACTIVE")              // ✅ DB column = status
+                .schemaRaw(schemaRawFinal)
+                .schemaCanonical(canonical)
+                .schemaHash(hash)
+                .status("ACTIVE")
                 .createdAt(Instant.now())
                 .build();
-
 
         // keep subject updated
         subj.setUpdatedAt(Instant.now());
@@ -266,7 +272,7 @@ public class KafkaSchemaRegistryService {
 
         return SchemaVersionDto.builder()
                 .id(e.getId())
-                .clusterId(s.getClusterId())
+                .clusterId(s.getClusterId())                 // ensure helper exists on entity
                 .subjectId(s.getId())
                 .subject(s.getSubject())
                 .version(e.getVersion())
@@ -275,22 +281,23 @@ public class KafkaSchemaRegistryService {
                 .schemaCanonical(e.getSchemaCanonical())
                 .schemaRaw(e.getSchemaRaw())
                 .schemaHash(e.getSchemaHash())
-                .enabled(isActive(e.getStatus()))
+                // ✅ ideal: enabled is subject-level for your UI toggle
+                .enabled(s.isEnabled())
                 .createdAt(e.getCreatedAt())
                 .build();
     }
 
-    private SchemaSubjectDto toSubjectDto(KafkaSchemaSubjectEntity s) {
+    private SchemaSubjectSummaryDto toSubjectSummaryDto(KafkaSchemaSubjectEntity s) {
         Integer latest = versionRepo.findMaxVersion(s.getId());
-        if (latest == null) latest = 0;
+        int latestVersion = (latest == null ? 0 : latest);
 
-        return SchemaSubjectDto.builder()
+        return SchemaSubjectSummaryDto.builder()
                 .subjectId(s.getId())
-                .clusterId(s.getClusterId())
+                .clusterId(s.getClusterId())                 // ensure helper exists on entity
                 .subject(s.getSubject())
                 .schemaType(parseSchemaType(s.getSchemaType()))
                 .compatibility(parseCompatibility(s.getCompatibility()))
-                .latestVersion(latest)
+                .latestVersion(latestVersion)
                 .enabled(s.isEnabled())
                 .updatedAt(s.getUpdatedAt())
                 .build();
@@ -344,11 +351,4 @@ public class KafkaSchemaRegistryService {
     private static void require(boolean ok, String msg) {
         if (!ok) throw new IllegalArgumentException(msg);
     }
-
-    private static boolean isActive(String status) {
-        if (status == null) return true; // treat null as active
-        String s = status.trim().toUpperCase();
-        return !s.equals("DEPRECATED") && !s.equals("DISABLED") && !s.equals("INACTIVE");
-    }
-
 }

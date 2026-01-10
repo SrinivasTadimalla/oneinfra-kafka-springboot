@@ -1,187 +1,191 @@
 spring:
-    application:
-        name: kafka
+  application:
+    name: kafka
 
-    main:
-        system-properties:
-            javax.net.ssl.trustStore: ${JVM_TRUSTSTORE:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
-            javax.net.ssl.trustStorePassword: ${JVM_TRUSTSTORE_PASSWORD:Srikar@1}
-            javax.net.ssl.trustStoreType: ${JVM_TRUSTSTORE_TYPE:PKCS12}
+  main:
+    system-properties:
+      javax.net.ssl.trustStore: ${JVM_TRUSTSTORE:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
+      javax.net.ssl.trustStorePassword: ${JVM_TRUSTSTORE_PASSWORD:Srikar@1}
+      javax.net.ssl.trustStoreType: ${JVM_TRUSTSTORE_TYPE:PKCS12}
 
-    session:
-        store-type: redis
-        timeout: 60m
+  session:
+    store-type: redis
+    timeout: 60m
 
-    data:
-        redis:
-            host: ${REDIS_HOST:192.168.66.1}
-            port: ${REDIS_PORT:6379}
-            password: ${REDIS_PASSWORD:Srikar@1}
-            timeout: 2s
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.66.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:Srikar@1}
+      timeout: 2s
 
-    cache:
-        type: redis
-        redis:
-            time-to-live: 10m
-            cache-null-values: false
-            use-key-prefix: true
-            key-prefix: "oneinfra:kafka:"
+  cache:
+    type: redis
+    redis:
+      time-to-live: 10m
+      cache-null-values: false
+      use-key-prefix: true
+      key-prefix: "oneinfra:kafka:"
 
-    datasource:
-        url: jdbc:postgresql://${DB_HOST:192.168.66.1}:5432/${DB_NAME:postgres}?currentSchema=${DB_SCHEMA:iaas_kafka}
-        username: ${DB_USER:postgres}
-        password: ${DB_PASSWORD:db2@dmin}
-        driver-class-name: org.postgresql.Driver
-        hikari:
-            maximum-pool-size: ${DB_POOL_MAX:8}
-            minimum-idle: ${DB_POOL_MIN:2}
-            connection-timeout: ${DB_CONN_TIMEOUT_MS:15000}
-            idle-timeout: 600000
-            max-lifetime: 1800000
-            connection-test-query: SELECT 1
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:192.168.66.1}:5432/${DB_NAME:postgres}?currentSchema=${DB_SCHEMA:iaas_kafka}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:db2@dmin}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:8}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: ${DB_CONN_TIMEOUT_MS:15000}
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
 
-    jpa:
-        database-platform: org.hibernate.dialect.PostgreSQLDialect
-        hibernate:
-            ddl-auto: none
-        properties:
-            hibernate:
-                default_schema: ${DB_SCHEMA:iaas_kafka}
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:iaas_kafka}
 
-    web:
-        cors:
-            allowed-origins:
-                - http://localhost:4200
-                - http://localhost:4300
-                - http://localhost:4900
-            allowed-methods: [ GET, POST, PUT, DELETE, OPTIONS ]
-            allowed-headers: [ Content-Type, Authorization ]
-            exposed-headers: [ Content-Type, Authorization ]
-            allow-credentials: true
+  web:
+    cors:
+      allowed-origins:
+        - http://localhost:4200
+        - http://localhost:4300
+        - http://localhost:4900
+      allowed-methods: [ GET, POST, PUT, DELETE, OPTIONS ]
+      allowed-headers: [ Content-Type, Authorization ]
+      exposed-headers: [ Content-Type, Authorization ]
+      allow-credentials: true
 
-    lifecycle:
-        timeout-per-shutdown-phase: 30s
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
 
-    security:
-        oauth2:
-            resourceserver:
-                jwt:
-                    issuer-uri: ${KEYCLOAK_ISSUER_URI:https://192.168.66.1:9443/realms/oneinfra-realm}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:https://192.168.66.1:9443/realms/oneinfra-realm}
 
 # ========================================================================
 # ✅ ONEINFRA KAFKA (SINGLE ROOT)
 # ========================================================================
 oneinfra:
-    kafka:
-        admin:
-            # realistic timeouts for TLS clusters
-            request-timeout-ms: ${KAFKA_ADMIN_REQUEST_TIMEOUT_MS:15000}
-            default-api-timeout-ms: ${KAFKA_ADMIN_DEFAULT_API_TIMEOUT_MS:15000}
-            # optional, if you added it in properties:
-            timeout-ms: ${KAFKA_ADMIN_TIMEOUT_MS:15000}
+  kafka:
+    admin:
+      request-timeout-ms: ${KAFKA_ADMIN_REQUEST_TIMEOUT_MS:15000}
+      default-api-timeout-ms: ${KAFKA_ADMIN_DEFAULT_API_TIMEOUT_MS:15000}
+      timeout-ms: ${KAFKA_ADMIN_TIMEOUT_MS:15000}
 
-            # TLS handshake / initial connect helpers
-            socket-setup-timeout-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MS:10000}
-            socket-setup-timeout-max-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MAX_MS:30000}
+      socket-setup-timeout-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MS:10000}
+      socket-setup-timeout-max-ms: ${KAFKA_ADMIN_SOCKET_SETUP_TIMEOUT_MAX_MS:30000}
 
-            # fallback only if code calls create(null/blank)
-            bootstrap-servers:
-                - ${KAFKA_DEFAULT_BOOTSTRAP_1:192.168.66.108:9093}
-                - ${KAFKA_DEFAULT_BOOTSTRAP_2:192.168.66.115:9093}
+      bootstrap-servers:
+        - ${KAFKA_DEFAULT_BOOTSTRAP_1:192.168.66.108:9093}
+        - ${KAFKA_DEFAULT_BOOTSTRAP_2:192.168.66.115:9093}
 
-            client-id: ${KAFKA_ADMIN_CLIENT_ID:oneinfra-kafka-admin}
+      client-id: ${KAFKA_ADMIN_CLIENT_ID:oneinfra-kafka-admin}
 
-            # ✅ IMPORTANT: ssl MUST be under admin
-            ssl:
-                security-protocol: ${KAFKA_ADMIN_SECURITY_PROTOCOL:SSL}
+      ssl:
+        security-protocol: ${KAFKA_ADMIN_SECURITY_PROTOCOL:SSL}
 
-                truststore-location: ${KAFKA_ADMIN_TRUSTSTORE_LOCATION:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
-                truststore-password: ${KAFKA_ADMIN_TRUSTSTORE_PASSWORD:Srikar@1}
-                truststore-type: ${KAFKA_ADMIN_TRUSTSTORE_TYPE:PKCS12}
+        truststore-location: ${KAFKA_ADMIN_TRUSTSTORE_LOCATION:/home/srinivas/pki/truststores/srinivas-trust-store.p12}
+        truststore-password: ${KAFKA_ADMIN_TRUSTSTORE_PASSWORD:Srikar@1}
+        truststore-type: ${KAFKA_ADMIN_TRUSTSTORE_TYPE:PKCS12}
 
-                keystore-location: ${KAFKA_ADMIN_KEYSTORE_LOCATION:/home/srinivas/pki/keystores/oneinfra-kafka-client.p12}
-                keystore-password: ${KAFKA_ADMIN_KEYSTORE_PASSWORD:Srikar@1}
-                keystore-type: ${KAFKA_ADMIN_KEYSTORE_TYPE:PKCS12}
+        keystore-location: ${KAFKA_ADMIN_KEYSTORE_LOCATION:/home/srinivas/pki/keystores/oneinfra-kafka-client.p12}
+        keystore-password: ${KAFKA_ADMIN_KEYSTORE_PASSWORD:Srikar@1}
+        keystore-type: ${KAFKA_ADMIN_KEYSTORE_TYPE:PKCS12}
 
-                key-password: ${KAFKA_ADMIN_KEY_PASSWORD:Srikar@1}
+        key-password: ${KAFKA_ADMIN_KEY_PASSWORD:Srikar@1}
 
-                # empty disables hostname verification (IP-based brokers)
-                endpoint-identification-algorithm: ${KAFKA_ADMIN_ENDPOINT_IDENTIFICATION_ALGORITHM:}
-
-server:
-    port: ${SERVER_PORT:9001}
-    shutdown: graceful
-    ssl:
-        enabled: ${SERVER_SSL_ENABLED:true}
-        key-store: ${SERVER_SSL_KEYSTORE:/home/srinivas/kafka-certs/oneinfra-api.p12}
-        key-store-type: PKCS12
-        key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
-        key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
+        endpoint-identification-algorithm: ${KAFKA_ADMIN_ENDPOINT_IDENTIFICATION_ALGORITHM:}
 
 # ========================================================================
-# ✅ LOGGING (DROP-IN)
-#   Turn ON Spring Security debugging for 401 root-cause.
-#   After you fix auth, you can revert org.springframework.security to INFO.
+# SERVER
+# ========================================================================
+server:
+  port: ${SERVER_PORT:9001}
+  shutdown: graceful
+  ssl:
+    enabled: ${SERVER_SSL_ENABLED:true}
+    key-store: ${SERVER_SSL_KEYSTORE:/home/srinivas/kafka-certs/oneinfra-api.p12}
+    key-store-type: PKCS12
+    key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:Srikar@1}
+    key-alias: ${SERVER_SSL_KEY_ALIAS:oneinfra-api}
+
+# ========================================================================
+# LOGGING
 # ========================================================================
 logging:
-    level:
-        root: INFO
-        org.springframework.security: DEBUG
-        org.springframework.security.oauth2: DEBUG
-        org.springframework.web: INFO
+  level:
+    root: INFO
+    org.springframework.security: DEBUG
+    org.springframework.security.oauth2: DEBUG
+    org.springframework.web: INFO
 
+# ========================================================================
+# ACTUATOR
+# ========================================================================
 management:
-    endpoints:
-        web:
-            exposure:
-                include: "*"
-    health:
-        show-details: always
-        probes:
-            enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  health:
+    show-details: always
+    probes:
+      enabled: true
 
+# ========================================================================
+# PROCESS / SSH CONTROL
+# ========================================================================
 process:
-    enabled: ${PROCESS_ENABLED:true}
-    ssh:
-        user: ${ONEINFRA_SSH_USER:oneinfractl}
-        port: ${ONEINFRA_SSH_PORT:22}
-        private-key-path: ${ONEINFRA_SSH_PRIVATE_KEY_PATH:/var/run/oneinfra-ssh/kafka_ssh_privatekey}
-        known-hosts-path: ${ONEINFRA_SSH_KNOWN_HOSTS_PATH:/var/run/oneinfra-ssh/kafka_server_hosts}
-        connect-timeout-ms: ${ONEINFRA_SSH_CONNECT_TIMEOUT_MS:3000}
-        command-timeout-ms: ${ONEINFRA_SSH_COMMAND_TIMEOUT_MS:10000}
+  enabled: ${PROCESS_ENABLED:true}
+  ssh:
+    user: ${ONEINFRA_SSH_USER:oneinfractl}
+    port: ${ONEINFRA_SSH_PORT:22}
+    private-key-path: ${ONEINFRA_SSH_PRIVATE_KEY_PATH:/var/run/oneinfra-ssh/kafka_ssh_privatekey}
+    known-hosts-path: ${ONEINFRA_SSH_KNOWN_HOSTS_PATH:/var/run/oneinfra-ssh/kafka_server_hosts}
+    connect-timeout-ms: ${ONEINFRA_SSH_CONNECT_TIMEOUT_MS:3000}
+    command-timeout-ms: ${ONEINFRA_SSH_COMMAND_TIMEOUT_MS:10000}
 
-    services:
-        controller-unit: ${ONEINFRA_CONTROLLER_UNIT:kafka-controller.service}
-        broker-unit: ${ONEINFRA_BROKER_UNIT:kafka-broker.service}
+  services:
+    controller-unit: ${ONEINFRA_CONTROLLER_UNIT:kafka-controller.service}
+    broker-unit: ${ONEINFRA_BROKER_UNIT:kafka-broker.service}
 
-    hosts:
-        controller: ${ONEINFRA_CONTROLLER_HOST:192.168.66.1}
-        brokers:
-            "1": ${ONEINFRA_BROKER1_HOST:192.168.66.108}
-            "2": ${ONEINFRA_BROKER2_HOST:192.168.66.115}
+  hosts:
+    controller: ${ONEINFRA_CONTROLLER_HOST:192.168.66.1}
+    brokers:
+      "1": ${ONEINFRA_BROKER1_HOST:192.168.66.108}
+      "2": ${ONEINFRA_BROKER2_HOST:192.168.66.115}
 
+# ========================================================================
+# RESILIENCE4J
+# ========================================================================
 resilience4j:
-    circuitbreaker:
-        instances:
-            kafkaAdmin:
-                sliding-window-type: COUNT_BASED
-                sliding-window-size: 4
-                failure-rate-threshold: 50
-                wait-duration-in-open-state: 30s
-                permitted-number-of-calls-in-half-open-state: 3
-                automatic-transition-from-open-to-half-open-enabled: true
-                record-exceptions:
-                    - org.apache.kafka.common.KafkaException
-                    - org.apache.kafka.common.errors.TimeoutException
-                    - java.net.ConnectException
+  circuitbreaker:
+    instances:
+      kafkaAdmin:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 4
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - org.apache.kafka.common.KafkaException
+          - org.apache.kafka.common.errors.TimeoutException
+          - java.net.ConnectException
 
-    retry:
-        instances:
-            kafkaAdmin:
-                max-attempts: 3
-                wait-duration: 1s
-                retry-exceptions:
-                    - org.apache.kafka.common.KafkaException
-                    - org.apache.kafka.common.errors.TimeoutException
-                    - java.net.ConnectException
-                fail-after-max-attempts: true
+  retry:
+    instances:
+      kafkaAdmin:
+        max-attempts: 3
+        wait-duration: 1s
+        retry-exceptions:
+          - org.apache.kafka.common.KafkaException
+          - org.apache.kafka.common.errors.TimeoutException
+          - java.net.ConnectException
+        fail-after-max-attempts: true
