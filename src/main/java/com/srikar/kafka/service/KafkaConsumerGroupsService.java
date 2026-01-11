@@ -4,6 +4,8 @@ import com.srikar.kafka.config.KafkaAdminClientFactory;
 import com.srikar.kafka.db.KafkaClusterRepository;
 import com.srikar.kafka.dto.consumer.ConsumerGroupDetailDto;
 import com.srikar.kafka.dto.consumer.ConsumerGroupPartitionLagDto;
+import com.srikar.kafka.dto.consumer.ConsumerGroupResetRequest;
+import com.srikar.kafka.dto.consumer.ConsumerGroupResetResponse;
 import com.srikar.kafka.dto.consumer.ConsumerGroupSummaryDto;
 import com.srikar.kafka.entity.KafkaClusterEntity;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +15,7 @@ import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -184,5 +187,207 @@ public class KafkaConsumerGroupsService {
         rows.sort((a, b) -> Long.compare(b.getLag(), a.getLag()));
 
         return new GroupOffsetsAndLag(topicsCount, totalLag, rows);
+    }
+
+    // =====================================================================
+    // ✅ RESET OFFSETS BY TIMESTAMP (FINAL DTOs)
+    // =====================================================================
+    public ConsumerGroupResetResponse resetOffsetsByTimestamp(ConsumerGroupResetRequest req) {
+        Objects.requireNonNull(req, "request is required");
+        Objects.requireNonNull(req.getClusterId(), "clusterId is required");
+        if (req.getGroupId() == null || req.getGroupId().isBlank()) {
+            throw new IllegalArgumentException("groupId is required");
+        }
+        Objects.requireNonNull(req.getTimestamp(), "timestamp is required");
+
+        final UUID clusterId = req.getClusterId();
+        final String groupId = req.getGroupId().trim();
+        final Instant timestamp = req.getTimestamp();
+        final long tsMillis = timestamp.toEpochMilli();
+
+        try (AdminClient admin = adminForCluster(clusterId)) {
+
+            // 1) Ensure group exists
+            Map<String, ConsumerGroupDescription> map =
+                    admin.describeConsumerGroups(List.of(groupId), new DescribeConsumerGroupsOptions().timeoutMs(15_000))
+                            .all()
+                            .get(15, TimeUnit.SECONDS);
+
+            ConsumerGroupDescription desc = map.get(groupId);
+            if (desc == null) throw new NoSuchElementException("Group not found: " + groupId);
+
+            int members = desc.members() == null ? 0 : desc.members().size();
+            if (req.isRequireInactiveGroup() && members > 0) {
+                throw new IllegalStateException(
+                        "Group is ACTIVE (members=" + members + "). Stop consumers before resetting offsets. groupId=" + groupId
+                );
+            }
+
+            // 2) Get current committed offsets for the group (these partitions define our reset scope)
+            Map<TopicPartition, OffsetAndMetadata> committed =
+                    admin.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().timeoutMs(15_000))
+                            .partitionsToOffsetAndMetadata()
+                            .get(15, TimeUnit.SECONDS);
+
+            // If nothing committed yet => nothing to reset
+            if (committed == null || committed.isEmpty()) {
+                return ConsumerGroupResetResponse.builder()
+                        .clusterId(clusterId)
+                        .groupId(groupId)
+                        .timestamp(timestamp)
+                        .dryRun(req.isDryRun())
+                        .applied(false)
+                        .partitionsAffected(0)
+                        .partitionsUnchanged(0)
+                        .warnings(List.of("No committed offsets found for this group. Nothing to reset."))
+                        .changes(List.of())
+                        .build();
+            }
+
+            // 3) Ask Kafka for offsets-for-times (per partition)
+            Map<TopicPartition, OffsetSpec> byTsReq = new HashMap<>();
+            for (TopicPartition tp : committed.keySet()) {
+                byTsReq.put(tp, OffsetSpec.forTimestamp(tsMillis));
+            }
+
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> byTs =
+                    admin.listOffsets(byTsReq, new ListOffsetsOptions().timeoutMs(15_000))
+                            .all()
+                            .get(15, TimeUnit.SECONDS);
+
+            // 4) Optional fallback to earliest where timestamp doesn't resolve
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> earliest = Map.of();
+            Map<TopicPartition, OffsetSpec> earliestReq = new HashMap<>();
+
+            if (req.isFallbackToEarliest()) {
+                for (TopicPartition tp : committed.keySet()) {
+                    if (byTs.get(tp) == null) {
+                        earliestReq.put(tp, OffsetSpec.earliest());
+                    }
+                }
+                if (!earliestReq.isEmpty()) {
+                    earliest = admin.listOffsets(earliestReq, new ListOffsetsOptions().timeoutMs(15_000))
+                            .all()
+                            .get(15, TimeUnit.SECONDS);
+                }
+            }
+
+            // 5) Build new offsets + build response partition changes
+            Map<TopicPartition, OffsetAndMetadata> newOffsets = new HashMap<>();
+            List<ConsumerGroupResetResponse.PartitionChange> changes = new ArrayList<>(committed.size());
+            List<String> warnings = new ArrayList<>();
+
+            for (Map.Entry<TopicPartition, OffsetAndMetadata> e : committed.entrySet()) {
+                TopicPartition tp = e.getKey();
+
+                long before = (e.getValue() == null) ? -1L : e.getValue().offset();
+
+                ListOffsetsResult.ListOffsetsResultInfo info = byTs.get(tp);
+                String note = null;
+
+                if (info == null) {
+                    if (!req.isFallbackToEarliest()) {
+                        note = "No offset for timestamp (no fallback). Skipped.";
+                        changes.add(ConsumerGroupResetResponse.PartitionChange.builder()
+                                .topic(tp.topic())
+                                .partition(tp.partition())
+                                .beforeOffset(before)
+                                .afterOffset(before)
+                                .resolvedOffsetTimestamp(null)
+                                .delta(0L)
+                                .changed(false)
+                                .note(note)
+                                .build());
+                        continue;
+                    }
+
+                    info = earliest.get(tp);
+                    if (info == null) {
+                        note = "No offset for timestamp AND earliest not resolved. Skipped.";
+                        changes.add(ConsumerGroupResetResponse.PartitionChange.builder()
+                                .topic(tp.topic())
+                                .partition(tp.partition())
+                                .beforeOffset(before)
+                                .afterOffset(before)
+                                .resolvedOffsetTimestamp(null)
+                                .delta(0L)
+                                .changed(false)
+                                .note(note)
+                                .build());
+                        continue;
+                    }
+                    note = "No offset for timestamp → used earliest.";
+                }
+
+                long after = info.offset();
+                if (after < 0) {
+                    note = (note == null ? "" : note + " ") + "Resolved offset was <0. Skipped.";
+                    changes.add(ConsumerGroupResetResponse.PartitionChange.builder()
+                            .topic(tp.topic())
+                            .partition(tp.partition())
+                            .beforeOffset(before)
+                            .afterOffset(before)
+                            .resolvedOffsetTimestamp(info.timestamp())
+                            .delta(0L)
+                            .changed(false)
+                            .note(note.trim())
+                            .build());
+                    continue;
+                }
+
+                boolean changed = (before != after);
+                long delta = (before >= 0) ? (before - after) : 0L; // positive = rewound
+
+                changes.add(ConsumerGroupResetResponse.PartitionChange.builder()
+                        .topic(tp.topic())
+                        .partition(tp.partition())
+                        .beforeOffset(before)
+                        .afterOffset(after)
+                        .resolvedOffsetTimestamp(info.timestamp())
+                        .delta(delta)
+                        .changed(changed)
+                        .note(note)
+                        .build());
+
+                if (changed) {
+                    newOffsets.put(tp, new OffsetAndMetadata(after));
+                }
+            }
+
+            int affected = (int) changes.stream().filter(ConsumerGroupResetResponse.PartitionChange::isChanged).count();
+            int unchanged = changes.size() - affected;
+
+            if (!req.isDryRun()) {
+                if (newOffsets.isEmpty()) {
+                    warnings.add("No partitions required a change (already at target offsets).");
+                } else {
+                    admin.alterConsumerGroupOffsets(groupId, newOffsets)
+                            .all()
+                            .get(15, TimeUnit.SECONDS);
+                }
+            }
+
+            return ConsumerGroupResetResponse.builder()
+                    .clusterId(clusterId)
+                    .groupId(groupId)
+                    .timestamp(timestamp)
+                    .dryRun(req.isDryRun())
+                    .applied(!req.isDryRun() && !newOffsets.isEmpty())
+                    .partitionsAffected(affected)
+                    .partitionsUnchanged(unchanged)
+                    .warnings(warnings)
+                    .changes(changes)
+                    .build();
+
+        } catch (Exception e) {
+            return ConsumerGroupResetResponse.builder()
+                    .clusterId(req.getClusterId())
+                    .groupId(req.getGroupId())
+                    .timestamp(req.getTimestamp())
+                    .dryRun(req.isDryRun())
+                    .applied(false)
+                    .error("Failed to reset offsets by timestamp: " + e.getMessage())
+                    .build();
+        }
     }
 }
