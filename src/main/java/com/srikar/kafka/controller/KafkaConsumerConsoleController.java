@@ -1,33 +1,35 @@
 package com.srikar.kafka.controller;
 
+import com.srikar.kafka.api.ApiResponse;
 import com.srikar.kafka.dto.consumer.ConsumerDto;
 import com.srikar.kafka.service.KafkaConsumerConsoleService;
+import com.srikar.kafka.utilities.ApiResponses;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/kafka/consumer")
+@RequestMapping(
+        path = "/api/kafka/consumer",
+        produces = MediaType.APPLICATION_JSON_VALUE
+)
 public class KafkaConsumerConsoleController {
 
     private final KafkaConsumerConsoleService consumerService;
 
-    /**
-     * FETCH mode (one-shot read).
-     * UI calls this when user clicks "FETCH".
-     *
-     * Body: ConsumerDto.FetchRequest
-     * Resp: ConsumerDto.FetchResponse
-     */
-    @PostMapping("/fetch")
-    public ResponseEntity<ConsumerDto.FetchResponse> fetch(@RequestBody ConsumerDto.FetchRequest req) {
-        return ResponseEntity.ok(consumerService.fetch(req));
-    }
+    @PostMapping(
+            path = "/fetch",
+            consumes = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<ApiResponse<ConsumerDto.FetchResponse>> fetch(
+            @RequestBody ConsumerDto.FetchRequest req
+    ) {
+        ConsumerDto.FetchResponse result = consumerService.fetch(req);
 
-    /**
-     * (Optional placeholder)
-     * If later you implement true "TAIL" server-side (SSE/WebSocket),
-     * you can add endpoint(s) here.
-     */
+        return ResponseEntity.ok(
+                ApiResponses.ok("Messages fetched successfully", result)
+        );
+    }
 }

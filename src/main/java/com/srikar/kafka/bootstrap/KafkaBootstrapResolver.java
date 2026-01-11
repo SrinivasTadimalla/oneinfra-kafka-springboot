@@ -29,4 +29,5 @@ public class KafkaBootstrapResolver {
         redis.opsForValue().set(key, entity.getBootstrapServers(), TTL);
         return entity.getBootstrapServers();
     }
+
 }

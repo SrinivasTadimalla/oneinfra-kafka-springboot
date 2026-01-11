@@ -6,17 +6,22 @@ import com.srikar.kafka.dto.consumer.ConsumerDto;
 import com.srikar.kafka.dto.consumer.ConsumerRecordDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
-import java.util.Base64.Encoder;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -26,199 +31,268 @@ public class KafkaConsumerConsoleService {
     private final KafkaBootstrapResolver bootstrapResolver;
     private final KafkaAdminProperties props;
 
-    private static final Encoder B64 = Base64.getEncoder();
-
+    /**
+     * One-shot fetch:
+     * - creates consumer
+     * - assigns partitions (all or subset)
+     * - seeks based on position
+     * - polls until maxMessages or poll timeout budget
+     * - closes consumer
+     */
     public ConsumerDto.FetchResponse fetch(ConsumerDto.FetchRequest req) {
 
-        if (req == null) {
-            return new ConsumerDto.FetchResponse(null, null, 0, List.of());
-        }
+        if (req == null) throw new IllegalArgumentException("Request body is missing");
+        if (isBlank(req.clusterName())) throw new IllegalArgumentException("clusterName is required");
+        if (isBlank(req.topicName())) throw new IllegalArgumentException("topicName is required");
 
-        String clusterName = safe(req.clusterName());
-        String topic = safe(req.topic());
+        final String clusterName = req.clusterName().trim();
+        final String topicName = req.topicName().trim();
 
-        if (clusterName.isBlank() || topic.isBlank()) {
-            return new ConsumerDto.FetchResponse(clusterName, topic, 0, List.of());
-        }
+        final String bootstrap = bootstrapResolver.resolve(clusterName);
 
-        // 1) Resolve bootstrap (Redis-first like your other services)
-        String bootstrap = bootstrapResolver.resolve(clusterName);
+        final int pollTimeoutMs = resolvePollTimeoutMs(req);
+        final int maxMessages = resolveMaxMessages(req);
 
-        // 2) Build consumer props (ephemeral console consumer)
+        // Budget for the overall fetch: don’t let this call hang forever.
+        // You can tune this separately if you want.
+        final int totalBudgetMs = Math.max(pollTimeoutMs, safeTimeoutMsInt());
+
         Properties p = new Properties();
+
+        // ----------------------------
+        // Core consumer config
+        // ----------------------------
         p.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+        p.put(ConsumerConfig.CLIENT_ID_CONFIG, "oneinfra-ui-consumer-" + UUID.randomUUID());
 
-        // Console consumer pattern: assign + seek, no commits
+        // Console fetch should NOT join any real group (so we use a random group id)
+        p.put(ConsumerConfig.GROUP_ID_CONFIG, "oneinfra-ui-consumer-console-" + UUID.randomUUID());
+
+        // We manually assign + seek; do not auto-commit.
         p.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        p.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        // Keep it isolated
-        p.put(ConsumerConfig.GROUP_ID_CONFIG, "oneinfra-console-" + UUID.randomUUID());
-
+        // Read bytes (we’ll base64 encode to UI)
         p.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         p.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
 
-        // Optional tuning
-        p.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, String.valueOf(safeMax(req.maxMessages())));
-        p.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, String.valueOf(safeTimeoutMs()));
-        p.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, String.valueOf(safeTimeoutMs()));
+        // Safety limits
+        p.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, totalBudgetMs);
+        p.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, totalBudgetMs);
+        p.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, Math.max(30000, totalBudgetMs));
+        p.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, Math.min(maxMessages, 500)); // cap per poll
 
-        List<ConsumerRecordDto> out = new ArrayList<>();
+        // ----------------------------
+        // SSL / mTLS
+        // ----------------------------
+        KafkaAdminProperties.Ssl ssl = props.getSsl();
+        if (ssl == null) {
+            throw new IllegalStateException("Kafka SSL settings are missing (props.getSsl() == null)");
+        }
+
+        p.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, ssl.getSecurityProtocol()); // "SSL"
+
+        p.put(SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG, ssl.getTruststoreLocation());
+        p.put(SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG, ssl.getTruststorePassword());
+        p.put(SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, ssl.getTruststoreType());
+
+        p.put(SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG, ssl.getKeystoreLocation());
+        p.put(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, ssl.getKeystorePassword());
+        p.put(SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, ssl.getKeystoreType());
+        p.put(SslConfigs.SSL_KEY_PASSWORD_CONFIG, ssl.getKeyPassword());
+
+        // IP brokers → disable hostname verification
+        p.put(SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG,
+                ssl.getEndpointIdentificationAlgorithm() == null ? "" : ssl.getEndpointIdentificationAlgorithm());
+
+        List<ConsumerRecordDto> out = new ArrayList<>(Math.min(maxMessages, 200));
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(p)) {
 
-            // 3) Decide partitions
-            List<TopicPartition> tps = resolveTopicPartitions(consumer, topic, req.partitions());
-
+            // 1) Resolve partitions to read
+            List<TopicPartition> tps = resolveTopicPartitions(consumer, topicName, req.partitions());
             if (tps.isEmpty()) {
-                return new ConsumerDto.FetchResponse(clusterName, topic, 0, List.of());
+                return new ConsumerDto.FetchResponse(clusterName, topicName, 0, List.of());
             }
 
-            // 4) Assign (NO group coordination)
+            // 2) Assign (no group coordination)
             consumer.assign(tps);
 
-            // 5) Seek based on start position
-            applyStartPosition(consumer, tps, req);
+            // 3) Seek based on requested start position
+            applySeek(consumer, tps, req);
 
-            // 6) Poll and collect
-            Duration poll = Duration.ofMillis(safePollTimeoutMs(req.pollTimeoutMs()));
-            int target = safeMax(req.maxMessages());
+            // 4) Poll loop until maxMessages or budget exhausted
+            long deadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(totalBudgetMs);
 
-            while (out.size() < target) {
-                var records = consumer.poll(poll);
+            while (out.size() < maxMessages && System.nanoTime() < deadlineNs) {
+                ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofMillis(pollTimeoutMs));
                 if (records.isEmpty()) break;
 
                 for (ConsumerRecord<byte[], byte[]> r : records) {
                     out.add(toDto(r));
-                    if (out.size() >= target) break;
+                    if (out.size() >= maxMessages) break;
                 }
             }
 
-            return new ConsumerDto.FetchResponse(clusterName, topic, out.size(), out);
+            return new ConsumerDto.FetchResponse(clusterName, topicName, out.size(), out);
 
         } catch (Exception e) {
-            log.error("Consumer fetch failed. cluster={} topic={} bootstrap={}", clusterName, topic, bootstrap, e);
-            throw e;
+            log.error("Fetch failed cluster={} topic={} bootstrap={}", clusterName, topicName, bootstrap, e);
+            throw new RuntimeException("Fetch failed: " + safeMsg(e), e);
         }
     }
 
-    // -------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------
+    // ----------------------------
+    // Seek logic
+    // ----------------------------
 
-    private List<TopicPartition> resolveTopicPartitions(
-            KafkaConsumer<byte[], byte[]> consumer,
-            String topic,
-            List<Integer> partitions
-    ) {
-        if (partitions != null && !partitions.isEmpty()) {
-            List<TopicPartition> tps = new ArrayList<>();
-            for (Integer p : partitions) {
-                if (p != null && p >= 0) tps.add(new TopicPartition(topic, p));
-            }
-            return tps;
-        }
+    private void applySeek(KafkaConsumer<byte[], byte[]> consumer,
+                           List<TopicPartition> tps,
+                           ConsumerDto.FetchRequest req) {
 
-        var parts = consumer.partitionsFor(topic);
-        if (parts == null) return List.of();
-
-        return parts.stream()
-                .map(pi -> new TopicPartition(topic, pi.partition()))
-                .toList();
-    }
-
-    private void applyStartPosition(
-            KafkaConsumer<byte[], byte[]> consumer,
-            List<TopicPartition> tps,
-            ConsumerDto.FetchRequest req
-    ) {
-        ConsumerDto.Position pos = req.position();
-        if (pos == null) pos = ConsumerDto.Position.LATEST;
+        ConsumerDto.Position pos = req.position() == null ? ConsumerDto.Position.LATEST : req.position();
 
         switch (pos) {
             case EARLIEST -> consumer.seekToBeginning(tps);
             case LATEST -> consumer.seekToEnd(tps);
 
             case OFFSET -> {
-                Long off = req.offset();
-                if (off == null || off < 0) {
-                    consumer.seekToEnd(tps);
-                    return;
+                if (req.offset() == null || req.offset() < 0) {
+                    throw new IllegalArgumentException("offset is required and must be >= 0 when position=OFFSET");
                 }
-                for (TopicPartition tp : tps) consumer.seek(tp, off);
+                long off = req.offset();
+                for (TopicPartition tp : tps) {
+                    consumer.seek(tp, off);
+                }
             }
 
             case TIMESTAMP -> {
-                Long ts = req.timestampMs();
-                if (ts == null || ts <= 0) {
-                    consumer.seekToEnd(tps);
-                    return;
+                if (req.timestampMs() == null || req.timestampMs() <= 0) {
+                    throw new IllegalArgumentException("timestampMs is required and must be > 0 when position=TIMESTAMP");
                 }
                 Map<TopicPartition, Long> query = new HashMap<>();
-                for (TopicPartition tp : tps) query.put(tp, ts);
+                for (TopicPartition tp : tps) query.put(tp, req.timestampMs());
 
-                var offsets = consumer.offsetsForTimes(query);
+                Map<TopicPartition, org.apache.kafka.clients.consumer.OffsetAndTimestamp> offsets =
+                        consumer.offsetsForTimes(query);
+
+                // If broker returns null (no offset at that timestamp), fall back to end
                 for (TopicPartition tp : tps) {
-                    var ot = offsets.get(tp);
-                    if (ot != null) consumer.seek(tp, ot.offset());
+                    var oat = offsets.get(tp);
+                    if (oat != null) consumer.seek(tp, oat.offset());
                     else consumer.seekToEnd(List.of(tp));
                 }
             }
         }
     }
 
+    private List<TopicPartition> resolveTopicPartitions(KafkaConsumer<byte[], byte[]> consumer,
+                                                        String topic,
+                                                        List<Integer> requested) {
+
+        var partitions = consumer.partitionsFor(topic);
+        if (partitions == null || partitions.isEmpty()) return List.of();
+
+        Set<Integer> all = partitions.stream().map(pi -> pi.partition()).collect(Collectors.toSet());
+
+        // If user didn’t pass partitions → all
+        if (requested == null || requested.isEmpty()) {
+            return all.stream().sorted().map(p -> new TopicPartition(topic, p)).toList();
+        }
+
+        // Validate subset
+        for (Integer p : requested) {
+            if (p == null || !all.contains(p)) {
+                throw new IllegalArgumentException("Invalid partition: " + p + " for topic: " + topic);
+            }
+        }
+
+        return requested.stream()
+                .distinct()
+                .sorted()
+                .map(p -> new TopicPartition(topic, p))
+                .toList();
+    }
+
+    // ----------------------------
+    // Mapping helpers
+    // ----------------------------
+
     private ConsumerRecordDto toDto(ConsumerRecord<byte[], byte[]> r) {
+        String keyB64 = r.key() == null ? null : Base64.getEncoder().encodeToString(r.key());
+        String valB64 = r.value() == null ? null : Base64.getEncoder().encodeToString(r.value());
 
-        String key = (r.key() == null) ? null : B64.encodeToString(r.key());
-        String value = (r.value() == null) ? null : B64.encodeToString(r.value());
+        // Optional convenience: show headers as "k=v; k2=v2" where v is UTF-8 best-effort
+        String headers = null;
+        if (r.headers() != null) {
+            List<String> parts = new ArrayList<>();
+            for (Header h : r.headers()) {
+                String v = h.value() == null ? "" : safeUtf8(h.value());
+                parts.add(h.key() + "=" + v);
+            }
+            headers = parts.isEmpty() ? null : String.join("; ", parts);
+        }
 
-        String headers = headersToString(r.headers());
-        Integer sizeBytes = (r.value() == null) ? null : r.value().length;
+        Integer sizeBytes = null;
+        try {
+            // r.serializedValueSize() exists in Kafka ConsumerRecord
+            int vSize = r.serializedValueSize();
+            int kSize = r.serializedKeySize();
+            if (vSize >= 0 || kSize >= 0) sizeBytes = Math.max(0, vSize) + Math.max(0, kSize);
+        } catch (Exception ignored) {
+        }
 
         return new ConsumerRecordDto(
                 r.partition(),
                 r.offset(),
                 r.timestamp(),
-                key,
-                value,
+                keyB64,
+                valB64,
                 headers,
                 sizeBytes
         );
     }
 
-    private String headersToString(Iterable<Header> headers) {
-        if (headers == null) return null;
-
-        StringBuilder sb = new StringBuilder();
-        for (Header h : headers) {
-            if (h == null) continue;
-            if (sb.length() > 0) sb.append("; ");
-            sb.append(h.key()).append("=")
-                    .append(h.value() == null ? "null" : B64.encodeToString(h.value()));
+    private String safeUtf8(byte[] bytes) {
+        try {
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return Base64.getEncoder().encodeToString(bytes);
         }
-        return sb.length() == 0 ? null : sb.toString();
     }
 
-    private int safeMax(Integer max) {
-        int v = (max == null) ? 50 : max;
-        if (v < 1) v = 1;
-        if (v > 1000) v = 1000;
-        return v;
+    // ----------------------------
+    // Defaults / guards
+    // ----------------------------
+
+    private int resolvePollTimeoutMs(ConsumerDto.FetchRequest req) {
+        Integer ms = req.pollTimeoutMs();
+        if (ms == null) return 1000;
+        if (ms < 100) return 100;
+        if (ms > 10000) return 10000;
+        return ms;
     }
 
-    private int safePollTimeoutMs(Integer ms) {
-        int v = (ms == null) ? 1500 : ms;
-        if (v < 100) v = 100;
-        if (v > 30000) v = 30000;
-        return v;
+    private int resolveMaxMessages(ConsumerDto.FetchRequest req) {
+        Integer m = req.maxMessages();
+        if (m == null) return 50;
+        if (m < 1) return 1;
+        if (m > 500) return 500; // UI safety cap
+        return m;
     }
 
-    private long safeTimeoutMs() {
+    private int safeTimeoutMsInt() {
         Integer ms = props.getDefaultApiTimeoutMs();
-        return (ms == null || ms < 1000) ? 15000L : ms.longValue();
+        int resolved = (ms == null || ms < 1000) ? 15000 : ms;
+        if (resolved < 1000) resolved = 15000;
+        return resolved;
     }
 
-    private String safe(String s) {
-        return s == null ? "" : s.trim();
+    private boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    private String safeMsg(Throwable t) {
+        String m = t.getMessage();
+        return m == null ? "" : (m.length() > 500 ? m.substring(0, 500) : m);
     }
 }
