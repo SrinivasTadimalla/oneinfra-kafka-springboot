@@ -8,24 +8,42 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface KafkaConsumerGroupRepository extends JpaRepository<KafkaConsumerGroupEntity, UUID> {
+public interface KafkaConsumerGroupRepository
+        extends JpaRepository<KafkaConsumerGroupEntity, UUID> {
 
-    // ✅ Used for "Register" (idempotent: don't create duplicates)
-    Optional<KafkaConsumerGroupEntity> findByClusterIdAndGroupId(UUID clusterId, String groupId);
+    // =====================================================
+    // Registration & idempotency
+    // =====================================================
 
-    boolean existsByClusterIdAndGroupId(UUID clusterId, String groupId);
+    Optional<KafkaConsumerGroupEntity> findByClusterIdAndGroupId(
+            UUID clusterId,
+            String groupId
+    );
 
-    // ✅ List groups for a cluster (for UI)
-    Page<KafkaConsumerGroupEntity> findAllByClusterId(UUID clusterId, Pageable pageable);
+    boolean existsByClusterIdAndGroupId(
+            UUID clusterId,
+            String groupId
+    );
 
-    // ✅ Search by groupId (contains) within a cluster
+    // =====================================================
+    // UI listing
+    // =====================================================
+
+    Page<KafkaConsumerGroupEntity> findAllByClusterId(
+            UUID clusterId,
+            Pageable pageable
+    );
+
+    // =====================================================
+    // Search (UI filters)
+    // =====================================================
+
     Page<KafkaConsumerGroupEntity> findAllByClusterIdAndGroupIdContainingIgnoreCase(
             UUID clusterId,
             String groupId,
             Pageable pageable
     );
 
-    // ✅ Optional: search by customer name within a cluster
     Page<KafkaConsumerGroupEntity> findAllByClusterIdAndCustomerNameContainingIgnoreCase(
             UUID clusterId,
             String customerName,
