@@ -1,9 +1,11 @@
 package com.srikar.kafka.service;
 
+import com.srikar.kafka.config.KafkaAdminClientFactory;
+import com.srikar.kafka.db.KafkaClusterRepository;
 import com.srikar.kafka.dto.consumer.ConsumerGroupDetailDto;
 import com.srikar.kafka.dto.consumer.ConsumerGroupPartitionLagDto;
 import com.srikar.kafka.dto.consumer.ConsumerGroupSummaryDto;
-
+import com.srikar.kafka.entity.KafkaClusterEntity;
 import lombok.RequiredArgsConstructor;
 import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -18,19 +20,23 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class KafkaConsumerGroupsService {
 
-    // TODO: inject your ClustersConfig / ConnectorProperties / whatever you use
-    // private final ClustersConfig clustersConfig;
+    private final KafkaClusterRepository clusterRepository;
+    private final KafkaAdminClientFactory adminFactory;
 
-    /**
-     * Build AdminClient for a specific cluster.
-     * Replace this with your existing cluster bootstrap + SSL config resolution.
-     */
     private AdminClient adminForCluster(UUID clusterId) {
-        // Example wiring approach:
-        // Properties props = clustersConfig.adminClientProps(clusterId);
-        // return AdminClient.create(props);
+        KafkaClusterEntity cluster = clusterRepository.findById(clusterId)
+                .orElseThrow(() -> new IllegalArgumentException("Cluster not found: " + clusterId));
 
-        throw new UnsupportedOperationException("Wire to your cluster config");
+        if (!cluster.isEnabled()) {
+            throw new IllegalStateException("Cluster is disabled: " + cluster.getName() + " (" + clusterId + ")");
+        }
+
+        String bootstrap = cluster.getBootstrapServers() == null ? "" : cluster.getBootstrapServers().trim();
+        if (bootstrap.isBlank()) {
+            throw new IllegalStateException("bootstrapServers is empty for cluster: " + cluster.getName() + " (" + clusterId + ")");
+        }
+
+        return adminFactory.create(bootstrap);
     }
 
     public List<ConsumerGroupSummaryDto> listGroups(UUID clusterId) {
@@ -66,8 +72,8 @@ public class KafkaConsumerGroupsService {
                         .groupId(gid)
                         .state(mapState(d.state()))
                         .membersCount(d.members() == null ? 0 : d.members().size())
-                        .topicsCount(lag.topicsCount)
-                        .totalLag(lag.totalLag)
+                        .topicsCount(lag.topicsCount())
+                        .totalLag(lag.totalLag())
                         .build());
             }
 
@@ -91,7 +97,7 @@ public class KafkaConsumerGroupsService {
 
             GroupOffsetsAndLag lag = computeLag(admin, groupId);
 
-            List<String> clientIds = (d.members() == null) ? List.of() :
+            List<String> clientIds = d.members() == null ? List.of() :
                     d.members().stream()
                             .map(m -> m.clientId() == null ? "" : m.clientId())
                             .filter(s -> !s.isBlank())
@@ -104,9 +110,9 @@ public class KafkaConsumerGroupsService {
                     .state(mapState(d.state()))
                     .membersCount(d.members() == null ? 0 : d.members().size())
                     .memberClientIds(clientIds)
-                    .topicsCount(lag.topicsCount)
-                    .totalLag(lag.totalLag)
-                    .partitions(lag.partitions)
+                    .topicsCount(lag.topicsCount())
+                    .totalLag(lag.totalLag())
+                    .partitions(lag.partitions())
                     .build();
 
         } catch (Exception e) {
@@ -115,20 +121,14 @@ public class KafkaConsumerGroupsService {
     }
 
     private String mapState(ConsumerGroupState state) {
-        return (state == null) ? "UNKNOWN" : state.name();
+        return state == null ? "UNKNOWN" : state.name();
     }
 
-    private static final class GroupOffsetsAndLag {
-        final int topicsCount;
-        final long totalLag;
-        final List<ConsumerGroupPartitionLagDto> partitions;
-
-        GroupOffsetsAndLag(int topicsCount, long totalLag, List<ConsumerGroupPartitionLagDto> partitions) {
-            this.topicsCount = topicsCount;
-            this.totalLag = totalLag;
-            this.partitions = partitions;
-        }
-    }
+    private record GroupOffsetsAndLag(
+            int topicsCount,
+            long totalLag,
+            List<ConsumerGroupPartitionLagDto> partitions
+    ) {}
 
     private GroupOffsetsAndLag computeLag(AdminClient admin, String groupId) throws Exception {
 
@@ -157,8 +157,8 @@ public class KafkaConsumerGroupsService {
         for (Map.Entry<TopicPartition, OffsetAndMetadata> e : committed.entrySet()) {
             TopicPartition tp = e.getKey();
 
-            long committedOffset = (e.getValue() == null) ? -1L : e.getValue().offset();
-            long endOffset = (end.get(tp) == null) ? -1L : end.get(tp).offset();
+            long committedOffset = e.getValue() == null ? -1L : e.getValue().offset();
+            long endOffset = end.get(tp) == null ? -1L : end.get(tp).offset();
 
             long lag = 0L;
             if (committedOffset >= 0 && endOffset >= 0) {
