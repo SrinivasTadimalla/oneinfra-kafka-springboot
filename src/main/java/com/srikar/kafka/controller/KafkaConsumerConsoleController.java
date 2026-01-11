@@ -32,4 +32,5 @@ public class KafkaConsumerConsoleController {
                 ApiResponses.ok("Messages fetched successfully", result)
         );
     }
+
 }
