@@ -146,7 +146,7 @@ public class KafkaConsumerConsoleService {
     }
 
     /* =========================================================
-       ✅ NEW: TAIL (stateless cursor-based poll)
+       ✅ TAIL (stateless cursor-based poll)
        - This API does ONE poll only
        - UI calls repeatedly based on pollIntervalMs
        ========================================================= */
@@ -164,9 +164,6 @@ public class KafkaConsumerConsoleService {
         final int pollTimeoutMs = clamp(req.getPollTimeoutMs(), 100, 10000, 1000);
         final int maxMessages = clamp(req.getMaxMessages(), 1, 500, 50);
 
-        // NOTE:
-        // Your DTO can define includeHeaders/includeKey either as primitive boolean (recommended)
-        // or Boolean. This code supports BOTH safely.
         final boolean includeHeaders = readBoolean(req, true, "getIncludeHeaders", "isIncludeHeaders", "includeHeaders");
         final boolean includeKey = readBoolean(req, true, "getIncludeKey", "isIncludeKey", "includeKey");
 
@@ -232,22 +229,24 @@ public class KafkaConsumerConsoleService {
             // 2) assign partitions
             consumer.assign(tps);
 
-            // 3) tail start position:
-            //    - if cursor present => seek that partition to cursor.offset + 1
-            //    - else => seekToEnd(all) (live only)
+            // 3) seek from cursor (per partition), else tail from end
             ConsumerTailCursor cursor = req.getLastSeen();
+            Map<Integer, Long> last = (cursor == null ? null : cursor.getOffsetsByPartition());
 
-            if (cursor != null && cursor.getPartition() != null && cursor.getOffset() != null) {
-                TopicPartition tp = new TopicPartition(topicName, cursor.getPartition());
-
-                if (!tps.contains(tp)) {
-                    warnings.add("Cursor partition " + cursor.getPartition() + " is not valid for this topic. Tailing from end.");
-                    consumer.seekToEnd(tps);
-                } else {
-                    consumer.seek(tp, cursor.getOffset() + 1);
-                }
-            } else {
+            if (last == null || last.isEmpty()) {
+                // Live tail: start at end for ALL assigned partitions
                 consumer.seekToEnd(tps);
+            } else {
+                // Resume tail: seek each partition to lastOffset + 1
+                for (TopicPartition tp : tps) {
+                    Long off = last.get(tp.partition());
+                    if (off == null) {
+                        // New partition (not seen in cursor) -> start from end (safe default)
+                        consumer.seekToEnd(List.of(tp));
+                    } else {
+                        consumer.seek(tp, off + 1);
+                    }
+                }
             }
 
             // 4) poll ONCE (UI repeats)
@@ -258,17 +257,25 @@ public class KafkaConsumerConsoleService {
                 if (out.size() >= maxMessages) break;
             }
 
-            // 5) next cursor
-            ConsumerTailCursor nextCursor;
-            if (!out.isEmpty()) {
-                ConsumerTailRecordDto last = out.get(out.size() - 1);
-                nextCursor = ConsumerTailCursor.builder()
-                        .partition(last.getPartition())
-                        .offset(last.getOffset())
-                        .build();
-            } else {
-                nextCursor = cursor; // keep same if nothing new
+            // 5) next cursor: update per-partition offsets
+            Map<Integer, Long> nextMap = new HashMap<>();
+            if (last != null) nextMap.putAll(last);
+
+            // For each returned record, keep the max offset per partition
+            for (ConsumerTailRecordDto rec : out) {
+                Integer part = rec.getPartition();
+                Long off = rec.getOffset();
+                if (part == null || off == null) continue;
+
+                Long prev = nextMap.get(part);
+                if (prev == null || off > prev) {
+                    nextMap.put(part, off);
+                }
             }
+
+            ConsumerTailCursor nextCursor = ConsumerTailCursor.builder()
+                    .offsetsByPartition(nextMap.isEmpty() ? null : nextMap)
+                    .build();
 
             return ConsumerTailResponse.builder()
                     .clusterName(clusterName)

@@ -27,7 +27,7 @@ public class KafkaConsumerConsoleController {
             consumes = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<ApiResponse<ConsumerDto.FetchResponse>> fetch(
-            @RequestBody ConsumerDto.FetchRequest req
+            @Valid @RequestBody ConsumerDto.FetchRequest req
     ) {
         ConsumerDto.FetchResponse result = consumerService.fetch(req);
 
